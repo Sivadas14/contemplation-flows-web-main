@@ -1,0 +1,79 @@
+name: Build and Deploy to AWS App Runner
+
+on:
+  push:
+    branches:
+      - main
+  workflow_dispatch:  # Allow manual trigger
+
+env:
+  AWS_REGION: us-east-1
+  ECR_REPOSITORY: arunachalasamudra
+  APP_RUNNER_SERVICE_ARN: arn:aws:apprunner:us-east-1:491766120292:service/contemplation-flow/5b294ce6aeb54f53826ce2d6e8e33a17
+
+jobs:
+  deploy:
+    name: Build, Push, Deploy
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Login to Amazon ECR
+        id: login-ecr
+        uses: aws-actions/amazon-ecr-login@v2
+
+      - name: Build Docker image
+        env:
+          ECR_REGISTRY: ${{ steps.login-ecr.outputs.registry }}
+        run: |
+          echo "Building Docker image..."
+          docker build \
+            --build-arg VITE_API_BASE_URL=https://arunachalasamudra.co.in/api \
+            -t $ECR_REGISTRY/$ECR_REPOSITORY:latest \
+            -t $ECR_REGISTRY/$ECR_REPOSITORY:${{ github.sha }} \
+            .
+          echo "Build complete."
+
+      - name: Push image to ECR
+        env:
+          ECR_REGISTRY: ${{ steps.login-ecr.outputs.registry }}
+        run: |
+          echo "Pushing image to ECR..."
+          docker push $ECR_REGISTRY/$ECR_REPOSITORY:latest
+          docker push $ECR_REGISTRY/$ECR_REPOSITORY:${{ github.sha }}
+          echo "Push complete. Image: $ECR_REGISTRY/$ECR_REPOSITORY:latest"
+
+      - name: Deploy to App Runner
+        run: |
+          echo "Triggering App Runner deployment..."
+          aws apprunner start-deployment \
+            --service-arn "${{ env.APP_RUNNER_SERVICE_ARN }}"
+          echo "Deployment triggered! App Runner is now deploying the new image."
+
+      - name: Wait for deployment to complete
+        run: |
+          echo "Waiting for App Runner service to reach RUNNING state..."
+          for i in {1..30}; do
+            STATUS=$(aws apprunner describe-service \
+              --service-arn "${{ env.APP_RUNNER_SERVICE_ARN }}" \
+              --query 'Service.Status' --output text)
+            echo "Status: $STATUS (check $i/30)"
+            if [ "$STATUS" = "RUNNING" ]; then
+              echo "✅ Deployment complete! Service is RUNNING."
+              exit 0
+            elif [ "$STATUS" = "CREATE_FAILED" ] || [ "$STATUS" = "UPDATE_FAILED" ] || [ "$STATUS" = "DELETED" ]; then
+              echo "❌ Deployment failed with status: $STATUS"
+              exit 1
+            fi
+            sleep 20
+          done
+          echo "⚠️ Timed out waiting. Check App Runner console for status."

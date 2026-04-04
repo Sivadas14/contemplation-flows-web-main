@@ -37,11 +37,11 @@ async def list_users(
     # Build the base query
     query = select(DBUserProfile)
 
-    # Apply filters: Search in name and phone_number
+    # Apply filters: Search in name and email
     if search_term:
         search_filter = or_(
             DBUserProfile.name.ilike(f"%{search_term}%"),
-            DBUserProfile.phone_number.ilike(f"%{search_term}%"),
+            DBUserProfile.email.ilike(f"%{search_term}%"),
         )
         query = query.where(search_filter)
 
@@ -71,8 +71,8 @@ async def list_users(
                 id=wire_user.id,
                 created_at=wire_user.created_at,
                 last_active=wire_user.last_active,
-                phone_number=wire_user.phone_number,
-                phone_verified=wire_user.phone_verified,
+                email=wire_user.email,
+                email_verified=wire_user.email_verified,
                 name=wire_user.name,
                 role=wire_user.role,
                 usage_stats={
@@ -135,7 +135,7 @@ async def delete_user(
 
     # Log the deletion for audit purposes
     tu.logger.info(
-        f"Admin {current_user.id} deleting user {user.id} ({user.phone_number})"
+        f"Admin {current_user.id} deleting user {user.id} ({user.email})"
     )
 
     # delete content generations
@@ -158,7 +158,7 @@ async def delete_user(
     tu.logger.info(f"Successfully deleted user {user.id} and all associated data")
     return w.SuccessResponse(
         success=True,
-        message=f"User {user.phone_number} and all associated data deleted successfully",
+        message=f"User {user.email} and all associated data deleted successfully",
     )
 
 

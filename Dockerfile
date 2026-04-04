@@ -57,8 +57,11 @@ COPY backend/src ./src
 # Copy the built frontend from the first stage
 COPY --from=frontend-builder /frontend/dist ./src/ui
 
+# Copy startup script
+COPY start.sh ./start.sh
+
 # Change ownership to non-root user
-RUN chown -R appuser:appuser /app
+RUN chown -R appuser:appuser /app && chmod +x /app/start.sh
 
 # Switch to the non-root user
 USER appuser
@@ -66,5 +69,5 @@ USER appuser
 # Expose the port
 EXPOSE 8000
 
-# Command to run the application
-CMD ["uvicorn", "src.server:get_app", "--host", "0.0.0.0", "--port", "8000", "--factory"] 
+# Run migrations then start the server
+CMD ["/app/start.sh"] 

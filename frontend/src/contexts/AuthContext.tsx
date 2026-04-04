@@ -4,19 +4,10 @@ import { apiClient } from '@/apis';
 // Types based on backend wire.py
 export interface User {
     id: string;
-    phone_number: string;
-    name: string;
-    phone_verified: boolean;
+    email: string;
+    name: string | null;
+    email_verified: boolean;
     role: string;
-    is_signed_in: boolean;
-    last_active_at: string;
-    created_at: string;
-    updated_at: string;
-}
-
-export interface LoginRequest {
-    phone_number: string;
-    otp?: string;
 }
 
 export interface AuthResponse {
@@ -31,17 +22,12 @@ export interface SuccessResponse {
     data?: any;
 }
 
-export interface NewUserRequest {
-    phone_number: string;
-    name: string;
-}
-
 interface AuthContextType {
     user: User | null;
     isAuthenticated: boolean;
     isLoading: boolean;
-    login: (phoneNumber: string, otp?: string) => Promise<AuthResponse | SuccessResponse>;
-    register: (phoneNumber: string, name: string) => Promise<SuccessResponse>;
+    login: (email: string, password: string) => Promise<AuthResponse>;
+    register: (email: string, password: string, name: string) => Promise<SuccessResponse>;
     logout: () => Promise<void>;
     checkAuth: () => Promise<boolean>;
     refreshToken: () => Promise<boolean>;
@@ -72,50 +58,48 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
         checkAuth();
     }, []);
 
-    // Set up automatic token refresh
+    // Set up automatic token refresh every 50 minutes (tokens expire in 1 hour)
     useEffect(() => {
         const refreshInterval = setInterval(() => {
             if (isAuthenticated) {
                 refreshToken();
             }
-        }, 50 * 60 * 1000); // Refresh every 50 minutes (tokens expire in 1 hour)
+        }, 50 * 60 * 1000);
 
         return () => clearInterval(refreshInterval);
     }, [isAuthenticated]);
 
-    const login = async (phoneNumber: string, otp?: string): Promise<AuthResponse | SuccessResponse> => {
+    const login = async (email: string, password: string): Promise<AuthResponse> => {
         try {
-            const response = await apiClient.post<AuthResponse | SuccessResponse>('/auth/login', {
-                phone_number: phoneNumber,
-                otp,
+            const response = await apiClient.post<AuthResponse>('/auth/login', {
+                email: email.trim().toLowerCase(),
+                password,
             });
 
-            // If this is step 2 (OTP verification) and login successful
-            if ('access_token' in response.data) {
-                const authResponse = response.data as AuthResponse;
-                localStorage.setItem('accessToken', authResponse.access_token);
-                localStorage.setItem('refreshToken', authResponse.refresh_token);
-                setUser(authResponse.user);
-            }
+            const authResponse = response.data;
+            localStorage.setItem('accessToken', authResponse.access_token);
+            localStorage.setItem('refreshToken', authResponse.refresh_token);
+            setUser(authResponse.user);
 
-            return response.data;
+            return authResponse;
         } catch (error: any) {
             console.error('Login error:', error);
-            throw new Error(error.response?.data?.detail || 'Login failed');
+            throw new Error(error.response?.data?.detail || 'Invalid email or password');
         }
     };
 
-    const register = async (phoneNumber: string, name: string): Promise<SuccessResponse> => {
+    const register = async (email: string, password: string, name: string): Promise<SuccessResponse> => {
         try {
             const response = await apiClient.post<SuccessResponse>('/auth/register', {
-                phone_number: phoneNumber,
-                name,
+                email: email.trim().toLowerCase(),
+                password,
+                name: name.trim(),
             });
 
             return response.data;
         } catch (error: any) {
             console.error('Registration error:', error);
-            throw new Error(error.response?.data?.detail || 'Registration failed');
+            throw new Error(error.response?.data?.detail || 'Registration failed. Please try again.');
         }
     };
 
@@ -125,7 +109,6 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
         } catch (error) {
             console.error('Logout error:', error);
         } finally {
-            // Clear tokens and user state regardless of API call success
             localStorage.removeItem('accessToken');
             localStorage.removeItem('refreshToken');
             setUser(null);
@@ -141,7 +124,6 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
         }
 
         try {
-            // Check if token is valid by calling /auth/me
             const response = await apiClient.get<User>('/auth/me');
             setUser(response.data);
             setIsLoading(false);
@@ -149,15 +131,13 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
         } catch (error: any) {
             console.error('Auth check failed:', error);
 
-            // Token might be expired, try to refresh
             if (error.response?.status === 401) {
                 const refreshSuccess = await refreshToken();
                 if (refreshSuccess) {
-                    return await checkAuth(); // Retry after refresh
+                    return await checkAuth();
                 }
             }
 
-            // Clear invalid tokens
             localStorage.removeItem('accessToken');
             localStorage.removeItem('refreshToken');
             setUser(null);
@@ -207,4 +187,4 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
             {children}
         </AuthContext.Provider>
     );
-}; 
+};

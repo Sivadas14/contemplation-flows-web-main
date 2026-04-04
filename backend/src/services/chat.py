@@ -200,7 +200,7 @@ async def create_mock_database_entries(
 
     # Create mock user
     user = db.UserProfile(
-        phone_number="+1234567890",
+        email="test@example.com",
         name="Test User",
         role=db.UserRole.USER,
     )

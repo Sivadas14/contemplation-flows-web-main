@@ -7,8 +7,8 @@ from tuneapi import tt
 # User Management Interfaces
 class User(tt.BM):
     id: str = tt.F("Unique user identifier")
-    phone_number: str = tt.F("User's phone number")
-    phone_verified: bool = tt.F("Whether user's phone number is verified")
+    email: str = tt.F("User's email address")
+    email_verified: bool = tt.F("Whether user's email address is verified")
     name: str | None = tt.F("User's display name")
     role: str = tt.F("User role: user or admin")
     created_at: datetime.datetime = tt.F("ISO timestamp of account creation")
@@ -16,13 +16,14 @@ class User(tt.BM):
 
 
 class NewUserRequest(tt.BM):
-    phone_number: str = tt.F("Phone number in international format")
+    email: str = tt.F("User's email address")
+    password: str = tt.F("User's password (min 8 characters)")
     name: str = tt.F("User's display name")
 
 
 class LoginRequest(tt.BM):
-    phone_number: str = tt.F("Phone number in international format")
-    otp: str | None = tt.F("OTP code for verification, required on second call", None)
+    email: str = tt.F("User's email address")
+    password: str = tt.F("User's password")
 
 
 class AuthResponse(tt.BM):

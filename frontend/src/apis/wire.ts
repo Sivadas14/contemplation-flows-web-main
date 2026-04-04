@@ -1,8 +1,8 @@
 // User Management Interfaces
 export interface User {
     id: string;
-    phone_number: string;
-    phone_verified: boolean;
+    email: string;
+    email_verified: boolean;
     name: string | null;
     role: string; // "user" or "admin"
     created_at: string; // ISO timestamp
@@ -10,13 +10,14 @@ export interface User {
 }
 
 export interface NewUserRequest {
-    phone_number: string;
+    email: string;
+    password: string;
     name: string;
 }
 
 export interface LoginRequest {
-    phone_number: string;
-    otp?: string | null;
+    email: string;
+    password: string;
 }
 
 export interface AuthResponse {

@@ -33,7 +33,7 @@ const UserMenu: React.FC = () => {
                         {user.name}
                     </p>
                     <p className="text-xs text-brand-body font-body">
-                        {user.phone_number}
+                        {user.email}
                     </p>
                 </div>
                 <DropdownMenuSeparator />

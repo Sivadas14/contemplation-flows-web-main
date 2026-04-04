@@ -290,8 +290,12 @@ class UserProfile(Base):
     created_at: Mapped[default_timestamp]
     updated_at: Mapped[updated_timestamp]
     last_active_at: Mapped[default_timestamp]
-    phone_number: Mapped[str] = mapped_column(String, unique=True, nullable=False)
+    # phone_number kept nullable for backward compatibility
+    phone_number: Mapped[str | None] = mapped_column(String, unique=True, nullable=True)
     phone_verified: Mapped[bool] = mapped_column(Boolean, default=False)
+    # Email + password authentication fields
+    email: Mapped[str | None] = mapped_column(String, unique=True, nullable=True)
+    password_hash: Mapped[str | None] = mapped_column(String, nullable=True)
     name: Mapped[str | None] = mapped_column(String, nullable=True)
     role: Mapped[UserRole] = mapped_column(
         pg_enum(UserRole, name="user_role_enum", create_type=True),
@@ -313,7 +317,9 @@ class UserProfile(Base):
     # )
 
     __table_args__ = (
-        # HIGH IMPACT: Phone number lookup (already unique, but explicit index)
+        # HIGH IMPACT: Email lookup (primary auth field)
+        Index("idx_user_profile_email", "email"),
+        # Phone number lookup for backward compat
         Index("idx_user_profile_phone", "phone_number"),
         # MEDIUM IMPACT: Role filtering
         Index("idx_user_profile_role", "role"),
@@ -324,8 +330,8 @@ class UserProfile(Base):
     async def to_bm(self) -> wire.User:
         return wire.User(
             id=str(self.id),
-            phone_number=self.phone_number,
-            phone_verified=self.phone_verified,
+            email=self.email or "",
+            email_verified=self.phone_verified,  # reuse existing verified flag
             name=self.name,
             role=self.role.value,
             last_active=self.last_active_at,

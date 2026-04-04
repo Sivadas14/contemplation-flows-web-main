@@ -39,7 +39,6 @@ jobs:
           docker build \
             --build-arg VITE_API_BASE_URL=https://arunachalasamudra.co.in/api \
             -t $ECR_REGISTRY/$ECR_REPOSITORY:latest \
-            -t $ECR_REGISTRY/$ECR_REPOSITORY:${{ github.sha }} \
             .
           echo "Build complete."
 
@@ -49,27 +48,11 @@ jobs:
         run: |
           echo "Pushing image to ECR..."
           docker push $ECR_REGISTRY/$ECR_REPOSITORY:latest
-          docker push $ECR_REGISTRY/$ECR_REPOSITORY:${{ github.sha }}
           echo "Push complete. Image: $ECR_REGISTRY/$ECR_REPOSITORY:latest"
 
-      - name: Update App Runner service image and deploy
-        env:
-          ECR_REGISTRY: ${{ steps.login-ecr.outputs.registry }}
+      - name: Trigger App Runner deployment
         run: |
-          IMAGE_URI="$ECR_REGISTRY/$ECR_REPOSITORY:${{ github.sha }}"
-          echo "Updating App Runner service to use image: $IMAGE_URI"
-
-          # Update the service to point to the exact new image SHA (avoids stale :latest issues)
-          UPDATE_RESULT=$(aws apprunner update-service \
-            --service-arn "${{ env.APP_RUNNER_SERVICE_ARN }}" \
-            --source-configuration "{\"ImageRepository\":{\"ImageIdentifier\":\"$IMAGE_URI\",\"ImageRepositoryType\":\"ECR\",\"ImageConfiguration\":{\"Port\":\"8000\"}}}" \
-            --output json 2>&1) || true
-
-          echo "Update result: $UPDATE_RESULT"
-
-          # Give the update a moment to register, then trigger deployment
-          sleep 5
-          echo "Triggering deployment..."
+          echo "Triggering App Runner deployment..."
           DEPLOY_RESULT=$(aws apprunner start-deployment \
             --service-arn "${{ env.APP_RUNNER_SERVICE_ARN }}" \
             --output json)
@@ -78,7 +61,7 @@ jobs:
           echo "Deployment triggered. Operation ID: $OPERATION_ID"
           echo "OPERATION_ID=$OPERATION_ID" >> $GITHUB_ENV
 
-      - name: Wait for deployment operation to succeed
+      - name: Wait for deployment to succeed
         run: |
           echo "Waiting for operation $OPERATION_ID to complete..."
           for i in {1..40}; do
@@ -94,7 +77,7 @@ jobs:
             echo "Operation: $OP_STATUS | Service: $SVC_STATUS (check $i/40)"
 
             if [ "$OP_STATUS" = "SUCCEEDED" ]; then
-              echo "✅ Deployment succeeded! Service is live with new image."
+              echo "✅ Deployment succeeded! Service is live."
               exit 0
             elif [ "$OP_STATUS" = "FAILED" ] || [ "$SVC_STATUS" = "UPDATE_FAILED" ]; then
               echo "❌ Deployment FAILED. Check App Runner console for logs."

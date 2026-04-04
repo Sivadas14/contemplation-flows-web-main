@@ -87,3 +87,16 @@ jobs:
           done
           echo "⚠️ Timed out after 13 minutes. Check App Runner console."
           exit 1
+
+      - name: Output App Runner service URL
+        if: always()
+        run: |
+          SERVICE_URL=$(aws apprunner describe-service \
+            --service-arn "${{ env.APP_RUNNER_SERVICE_ARN }}" \
+            --query 'Service.ServiceUrl' --output text)
+          echo "🌐 App Runner native URL: https://$SERVICE_URL"
+          echo "🔗 Health check: https://$SERVICE_URL/health"
+          CUSTOM_DOMAINS=$(aws apprunner describe-custom-domains \
+            --service-arn "${{ env.APP_RUNNER_SERVICE_ARN }}" \
+            --query 'CustomDomains[*].DomainName' --output text 2>/dev/null || echo "none")
+          echo "🌍 Custom domains configured: $CUSTOM_DOMAINS"

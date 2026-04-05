@@ -44,6 +44,14 @@ EXCEPTION WHEN OTHERS THEN
   NULL;
 END $$;
 
+-- Make auth_user_id nullable (legacy Supabase column, no longer used)
+DO $$
+BEGIN
+  ALTER TABLE user_profiles ALTER COLUMN auth_user_id DROP NOT NULL;
+EXCEPTION WHEN OTHERS THEN
+  NULL;
+END $$;
+
 -- Ensure role enum type exists
 DO $$
 BEGIN

@@ -139,13 +139,17 @@ def get_app() -> FastAPI:
                 await session.execute(text("SELECT 1"))
                 results["connected"] = True
 
-                # 2. Check which auth columns exist in user_profiles
+                # 2. Check ALL columns in user_profiles with nullable info
                 col_check = await session.execute(text(
-                    "SELECT column_name FROM information_schema.columns "
+                    "SELECT column_name, is_nullable, column_default "
+                    "FROM information_schema.columns "
                     "WHERE table_name = 'user_profiles' "
-                    "AND column_name IN ('email', 'password_hash', 'phone_number')"
+                    "ORDER BY ordinal_position"
                 ))
-                results["columns"] = [row[0] for row in col_check.fetchall()]
+                results["columns"] = [
+                    {"name": row[0], "nullable": row[1], "default": str(row[2]) if row[2] else None}
+                    for row in col_check.fetchall()
+                ]
 
                 # 3. Check alembic current revision
                 try:

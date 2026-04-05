@@ -380,7 +380,8 @@ class OTPSession(Base):
     __table_args__ = ()
 
 
-class EmailOTPType(enum.Enum):
+class EmailOTPType:
+    """Constants for email OTP types — stored as plain strings to avoid enum mismatches."""
     VERIFICATION = "verification"
     PASSWORD_RESET = "password_reset"
 
@@ -392,10 +393,7 @@ class EmailOTP(Base):
     id: Mapped[pkey_uuid]
     email: Mapped[str] = mapped_column(String, nullable=False)
     otp_code: Mapped[str] = mapped_column(String(10), nullable=False)
-    otp_type: Mapped[EmailOTPType] = mapped_column(
-        pg_enum(EmailOTPType, name="email_otp_type_enum", create_type=True),
-        nullable=False,
-    )
+    otp_type: Mapped[str] = mapped_column(String(20), nullable=False)
     attempts: Mapped[int] = mapped_column(Integer, default=0)
     max_attempts: Mapped[int] = mapped_column(Integer, default=5)
     expires_at: Mapped[datetime.datetime] = mapped_column(

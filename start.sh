@@ -138,10 +138,12 @@ UPDATE user_profiles SET phone_verified = FALSE WHERE phone_verified IS NULL;
 -- =====================================================
 -- Ensure email_otps table exists for OTP verification
 -- =====================================================
+-- Drop old enum-based table if it exists and recreate with VARCHAR
 DO $$
 BEGIN
-  CREATE TYPE email_otp_type_enum AS ENUM ('verification', 'password_reset');
-EXCEPTION WHEN duplicate_object THEN
+  -- If the table exists with enum type, alter the column to varchar
+  ALTER TABLE email_otps ALTER COLUMN otp_type TYPE VARCHAR(20);
+EXCEPTION WHEN OTHERS THEN
   NULL;
 END $$;
 
@@ -149,7 +151,7 @@ CREATE TABLE IF NOT EXISTS email_otps (
   id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
   email VARCHAR NOT NULL,
   otp_code VARCHAR(10) NOT NULL,
-  otp_type email_otp_type_enum NOT NULL,
+  otp_type VARCHAR(20) NOT NULL,
   attempts INTEGER DEFAULT 0,
   max_attempts INTEGER DEFAULT 5,
   expires_at TIMESTAMPTZ NOT NULL,

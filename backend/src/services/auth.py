@@ -94,7 +94,7 @@ def create_jwt_tokens(user_id: str) -> tuple[str, str]:
 async def _create_email_otp(
     session: AsyncSession,
     email: str,
-    otp_type: EmailOTPType,
+    otp_type: str,
 ) -> str:
     """Create a new OTP, invalidate old ones, and return the code."""
     # Mark old unused OTPs for this email+type as used (prevent reuse)
@@ -125,7 +125,7 @@ async def _verify_email_otp(
     session: AsyncSession,
     email: str,
     otp_code: str,
-    otp_type: EmailOTPType,
+    otp_type: str,
 ) -> bool:
     """Verify an OTP code. Returns True if valid, False otherwise."""
     now = tu.SimplerTimes.get_now_datetime()

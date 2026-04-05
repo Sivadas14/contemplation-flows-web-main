@@ -282,7 +282,7 @@ async def _llm_chat(
             input_tokens=150,
             output_tokens=75,
             processing_time_ms=int((tu.SimplerTimes.get_now_fp64() - st_ns) * 1000),
-            model_used="gpt-4o",
+            model_used="gpt-3.5-turbo",
         )
         session.add(ai_message)
         await session.commit()
@@ -402,7 +402,7 @@ async def _llm_chat_optimized(
             input_tokens=150,
             output_tokens=75,
             processing_time_ms=0,  # Will calculate separately
-            model_used="gpt-4o",
+            model_used="gpt-3.5-turbo",
         )
         
         # Add citations - REMOVE JSONB CONVERSION
@@ -530,7 +530,7 @@ async def _llm_chat_streaming_optimized(
             input_tokens=150,
             output_tokens=75,
             processing_time_ms=0,
-            model_used="gpt-4o",
+            model_used="gpt-3.5-turbo",
         )
         
         # Add citations - CONVERT TO JSONB
@@ -736,7 +736,7 @@ async def chat_completions(
         )
     else:
         async with profile_operation("streaming_llm_processing") as op:
-            model = ta.Openai(id="gpt-4o", api_token=settings.openai_token)
+            model = ta.Openai(id="gpt-3.5-turbo", api_token=settings.openai_token)
             response = StreamingResponse(
                 _llm_chat_streaming_optimized(session, model, master_thread, conversation, spb_client, request.message),  # Use streaming version
                 media_type="text/plain",

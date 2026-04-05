@@ -81,42 +81,19 @@ jobs:
         run: |
           echo "Image to deploy: $IMAGE_URI"
 
-          # Describe current service to get the access role ARN (may be empty)
-          SVC_JSON=$(aws apprunner describe-service \
-            --service-arn "$APP_RUNNER_SERVICE_ARN" \
-            --output json)
-
-          ACCESS_ROLE_ARN=$(echo "$SVC_JSON" | jq -r \
-            '.Service.SourceConfiguration.AuthenticationConfiguration.AccessRoleArn // ""')
-          echo "Access role ARN: '${ACCESS_ROLE_ARN}'"
-
-          # Build config — include AuthenticationConfiguration only if ARN is non-empty
-          if [ -n "$ACCESS_ROLE_ARN" ]; then
-            CONFIG_JSON=$(jq -n \
-              --arg img "$IMAGE_URI" \
-              --arg role "$ACCESS_ROLE_ARN" \
-              '{
-                ImageRepository: {
-                  ImageIdentifier: $img,
-                  ImageRepositoryType: "ECR",
-                  ImageConfiguration: { Port: "8000" }
-                },
-                AutoDeploymentsEnabled: false,
-                AuthenticationConfiguration: { AccessRoleArn: $role }
-              }')
-          else
-            echo "No AccessRoleArn found — omitting AuthenticationConfiguration"
-            CONFIG_JSON=$(jq -n \
-              --arg img "$IMAGE_URI" \
-              '{
-                ImageRepository: {
-                  ImageIdentifier: $img,
-                  ImageRepositoryType: "ECR",
-                  ImageConfiguration: { Port: "8000" }
-                },
-                AutoDeploymentsEnabled: false
-              }')
-          fi
+          # Only pass the image — do NOT include AuthenticationConfiguration.
+          # App Runner preserves the existing ECR access role from service creation.
+          # Passing AuthenticationConfiguration requires iam:PassRole which claude-deploy lacks.
+          CONFIG_JSON=$(jq -n \
+            --arg img "$IMAGE_URI" \
+            '{
+              ImageRepository: {
+                ImageIdentifier: $img,
+                ImageRepositoryType: "ECR",
+                ImageConfiguration: { Port: "8000" }
+              },
+              AutoDeploymentsEnabled: false
+            }')
 
           echo "Source config: $CONFIG_JSON"
 

@@ -1,18 +1,21 @@
 from tuneapi import tu
 
-from fastapi import File, UploadFile, Response, HTTPException
+from fastapi import File, UploadFile, Response, HTTPException,Depends
 from fastapi import APIRouter
 import tempfile
 import os
 
 from src.wire import TranscriptionResponse, TTSRequest
-from src.settings import get_llm, settings
+from src.settings import get_llm, Settings,get_settings
+from src.content.audio import _remove_transcript_artifacts
 
 SUPPORTED_AUDIO_EXTENSIONS = ["mp3", "mp4", "mpeg", "mpga", "m4a", "wav", "webm"]
 
 
 # Speech to Text
-async def transcribe_audio(audio: UploadFile = File(...)) -> TranscriptionResponse:
+async def transcribe_audio(
+        settings: Settings = Depends(get_settings),
+        audio: UploadFile = File(...)) -> TranscriptionResponse:
     """POST /api/speech/transcribe - Convert audio to text"""
     extension = audio.filename.split(".")[-1].lower()
     if extension not in SUPPORTED_AUDIO_EXTENSIONS:
@@ -55,6 +58,8 @@ async def generate_speech(request: TTSRequest) -> Response:
     """POST /api/tts/generate - Generate speech from text (returns binary audio)"""
     if not request.text:
         raise HTTPException(status_code=400, detail="Text is required")
+    # Remove transcript artifacts
+    cleaned_text = _remove_transcript_artifacts(request.text)
     model = get_llm("gpt-4o")
-    audio = await model.text_to_speech_async(prompt=request.text, voice="shimmer")
+    audio = await model.text_to_speech_async(prompt=cleaned_text, voice="shimmer")
     return Response(content=audio, media_type="audio/mpeg")

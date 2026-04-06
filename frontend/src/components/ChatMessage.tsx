@@ -90,22 +90,11 @@ const ChatMessage = ({
   if (message.isUser) {
     return (
       <div className="mb-6 flex justify-end">
-        <div className="max-w-3xl">
-          <div className="bg-orange-50 rounded-2xl p-6 relative border border-orange-200">
+        <div className="max-w-[85%]">
+          <div className="bg-[#ECE5DF] rounded-lg py-[10px] px-4 shadow-sm">
             <div className="flex justify-between items-start">
-              <div className="text-brand-body flex-1 mr-4 font-body">
+              <div className="text-gray-800 flex-1 font-body leading-relaxed prose prose-stone max-w-none prose-p:leading-relaxed prose-pre:bg-gray-800 prose-pre:text-gray-100">
                 <ReactMarkdown>{message.content}</ReactMarkdown>
-              </div>
-              <div className="flex gap-2">
-                {/* <Button
-                  onClick={handleSpeak}
-                  variant="ghost"
-                  size="sm"
-                  className={`rounded-full w-8 h-8 p-0 transition-all duration-300 ${speakerClicked ? 'bg-orange-100 scale-110' : ''
-                    }`}
-                >
-                  <Volume2 className="w-4 h-4" />
-                </Button> */}
               </div>
             </div>
           </div>
@@ -144,10 +133,10 @@ const ChatMessage = ({
 
         <div className="relative">
           <div className="flex justify-between items-start">
-            <div className="text-brand-body flex-1 mr-4 leading-relaxed font-body">
+            <div className="text-brand-body flex-1 mr-4 leading-relaxed font-body prose prose-stone max-w-none prose-p:leading-relaxed prose-strong:text-brand-button prose-headings:text-brand-heading prose-pre:bg-gray-800 prose-pre:text-gray-100">
               <ReactMarkdown>{message.content}</ReactMarkdown>
               {isStreaming && (
-                <span className="inline-block w-2 h-5 bg-brand-button ml-1 animate-pulse"></span>
+                <span className="inline-block w-2 h-5 bg-brand-button ml-1 animate-pulse align-middle"></span>
               )}
             </div>
           </div>

@@ -1,64 +1,43 @@
 from tuneapi import tu
 
-import hashlib
-import secrets
-import base64
-import datetime
 from fastapi import Depends, HTTPException
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import select, and_
+from sqlalchemy import select
 import jwt
+import datetime
+from uuid import uuid4
+from src.settings import Settings, get_settings
+from src.dependencies import get_current_user
+from tuneapi import tu
+
+# from src.wire import (
+#     LoginRequest,
+#     LogoutRequest,
+#     AuthResponse,
+#     User,
+#     RefreshTokenRequest,
+#     NewUserRequest,
+# )
 
 from src import wire as w
 from src.db import (
     get_db_session_fa,
     UserProfile,
+    OTPSession,
+    OTPSessionType,
+    OTPStatus,
     UserRole,
-    EmailOTP,
-    EmailOTPType,
-)
-from src.dependencies import get_current_user
-from src.settings import settings
-from src.services.email import (
-    generate_otp,
-    send_verification_otp,
-    send_password_reset_otp,
 )
 
 
-# ============================================================================
-# Password helpers (using Python standard library — no extra dependencies)
-# ============================================================================
 
-def hash_password(password: str) -> str:
-    """Hash a password using PBKDF2-HMAC-SHA256 with a random salt."""
-    salt = secrets.token_bytes(32)
-    dk = hashlib.pbkdf2_hmac("sha256", password.encode("utf-8"), salt, 200_000)
-    return base64.b64encode(salt + dk).decode("utf-8")
-
-
-def verify_password(password: str, hashed: str) -> bool:
-    """Verify a password against a stored hash."""
-    try:
-        decoded = base64.b64decode(hashed.encode("utf-8"))
-        salt = decoded[:32]
-        stored_dk = decoded[32:]
-        new_dk = hashlib.pbkdf2_hmac("sha256", password.encode("utf-8"), salt, 200_000)
-        # Constant-time comparison to prevent timing attacks
-        return secrets.compare_digest(new_dk, stored_dk)
-    except Exception:
-        return False
-
-
-# ============================================================================
-# JWT helpers
-# ============================================================================
-
-def create_jwt_tokens(user_id: str) -> tuple[str, str]:
-    """Create access and refresh tokens for a user."""
+def create_jwt_tokens(user_id: str,
+                      settings: Settings = Depends(get_settings),
+                      ) -> tuple[str, str]:
+    """Create access and refresh tokens for a user"""
     now = tu.SimplerTimes.get_now_datetime()
 
-    # Access token — expires in 1 hour
+    # Access token - expires in 1 hour
     access_payload = {
         "user_id": str(user_id),
         "exp": now + datetime.timedelta(hours=1),
@@ -71,7 +50,7 @@ def create_jwt_tokens(user_id: str) -> tuple[str, str]:
         algorithm=settings.jwt_algorithm,
     )
 
-    # Refresh token — expires in 30 days
+    # Refresh token - expires in 30 days
     refresh_payload = {
         "user_id": str(user_id),
         "exp": now + datetime.timedelta(days=30),
@@ -87,130 +66,132 @@ def create_jwt_tokens(user_id: str) -> tuple[str, str]:
     return access_token, refresh_token
 
 
-# ============================================================================
-# OTP helper — create and store an email OTP
-# ============================================================================
-
-async def _create_email_otp(
-    session: AsyncSession,
-    email: str,
-    otp_type: str,
-) -> str:
-    """Create a new OTP, invalidate old ones, and return the code."""
-    # Mark old unused OTPs for this email+type as used (prevent reuse)
-    old_query = select(EmailOTP).where(
-        and_(
-            EmailOTP.email == email,
-            EmailOTP.otp_type == otp_type,
-            EmailOTP.used == False,
-        )
-    )
-    old_result = await session.execute(old_query)
-    for old_otp in old_result.scalars().all():
-        old_otp.used = True
-
-    otp_code = generate_otp(6)
-    new_otp = EmailOTP(
-        email=email,
-        otp_code=otp_code,
-        otp_type=otp_type,
-        expires_at=tu.SimplerTimes.get_now_datetime() + datetime.timedelta(minutes=10),
-    )
-    session.add(new_otp)
-    await session.flush()  # Ensure it's written but don't commit yet
-    return otp_code
-
-
-async def _verify_email_otp(
-    session: AsyncSession,
-    email: str,
-    otp_code: str,
-    otp_type: str,
-) -> bool:
-    """Verify an OTP code. Returns True if valid, False otherwise."""
-    now = tu.SimplerTimes.get_now_datetime()
-    query = select(EmailOTP).where(
-        and_(
-            EmailOTP.email == email,
-            EmailOTP.otp_type == otp_type,
-            EmailOTP.used == False,
-            EmailOTP.expires_at > now,
-        )
-    ).order_by(EmailOTP.created_at.desc()).limit(1)
-
-    result = await session.execute(query)
-    otp_record = result.scalar_one_or_none()
-
-    if not otp_record:
-        return False
-
-    otp_record.attempts += 1
-
-    if otp_record.attempts > otp_record.max_attempts:
-        otp_record.used = True  # Too many attempts
-        return False
-
-    if secrets.compare_digest(otp_record.otp_code, otp_code):
-        otp_record.used = True  # Mark as consumed
-        return True
-
-    return False
-
-
-# ============================================================================
-# Auth endpoints
-# ============================================================================
-
+# Authentication
 async def login(
     request: w.LoginRequest,
     session: AsyncSession = Depends(get_db_session_fa),
-) -> w.AuthResponse:
-    """POST /api/auth/login — email + password login."""
-    email = request.email.strip().lower()
+) -> w.AuthResponse | w.SuccessResponse:
+    """POST /api/auth/login - User login (two-step: send OTP, then verify)"""
 
-    # Look up user by email
-    try:
-        user_query = select(UserProfile).where(UserProfile.email == email)
+    # Step 1: If no OTP provided, initiate login process
+    if not request.otp:
+        # Check if user exists
+        user_query = select(UserProfile).where(
+            UserProfile.phone_number == request.phone_number
+        )
         result = await session.execute(user_query)
         user = result.scalar_one_or_none()
-    except Exception as e:
-        tu.logger.error(f"Login DB query failed (columns may be missing): {e}")
-        raise HTTPException(
-            status_code=500,
-            detail=f"Database error — the email column may not exist. Run migrations. Detail: {str(e)[:200]}"
+
+        if not user:
+            raise HTTPException(status_code=404, detail="User not found")
+
+        if not user.is_active:
+            raise HTTPException(status_code=403, detail="Account deactivated. Please contact support.")
+
+        # Create OTP session for login
+        otp_session = OTPSession(
+            phone_number=request.phone_number,
+            otpless_request_id=str(
+                uuid4()
+            ),  # In a real implementation, this would come from OTP service
+            session_type=OTPSessionType.LOGIN,
+            status=OTPStatus.PENDING,
+            expires_at=tu.SimplerTimes.get_now_datetime()
+            + datetime.timedelta(minutes=10),
         )
 
-    if not user:
-        raise HTTPException(status_code=401, detail="Invalid email or password")
+        session.add(otp_session)
+        await session.commit()
 
-    if not user.password_hash:
-        raise HTTPException(status_code=401, detail="Invalid email or password")
+        # In a real implementation, you would send OTP via SMS here
+        # For now, we'll return a mock response
+        return w.SuccessResponse(
+            success=True,
+            message=f"OTP sent to your phone number {request.phone_number}",
+            data={
+                "phone_number": request.phone_number,
+                "expires_in": 600,  # 10 minutes
+            },
+        )
 
-    if not verify_password(request.password, user.password_hash):
-        raise HTTPException(status_code=401, detail="Invalid email or password")
+    # Step 2: Verify OTP and complete login
+    else:
+        # Find the OTP session
+        otp_query = (
+            select(OTPSession)
+            .where(
+                OTPSession.phone_number == request.phone_number,
+                OTPSession.session_type == OTPSessionType.LOGIN,
+                OTPSession.status == OTPStatus.PENDING,
+                OTPSession.expires_at > tu.SimplerTimes.get_now_datetime(),
+            )
+            .order_by(OTPSession.created_at.desc())
+        )
 
-    # Update last active timestamp and mark signed in
-    user.last_active_at = tu.SimplerTimes.get_now_datetime()
-    user.is_signed_in = True
-    await session.commit()
-    await session.refresh(user)
+        result = await session.execute(otp_query)
+        otp_session = result.scalar_one_or_none()
+        if not otp_session:
+            raise HTTPException(
+                status_code=400, detail="Invalid or expired OTP session"
+            )
 
-    # Generate JWT tokens
-    user_bm = await user.to_bm()
-    access_token, refresh_token = create_jwt_tokens(user_bm.id)
+        # Check if max attempts exceeded
+        if otp_session.attempts >= otp_session.max_attempts:
+            otp_session.status = OTPStatus.FAILED
+            await session.commit()
+            raise HTTPException(status_code=400, detail="Maximum OTP attempts exceeded")
 
-    return w.AuthResponse(
-        access_token=access_token,
-        refresh_token=refresh_token,
-        user=user_bm,
-    )
+        # Increment attempts
+        otp_session.attempts += 1
+
+        # In a real implementation, you would verify the OTP with the service
+        # For now, we'll accept any OTP (you should replace this with actual verification)
+        if request.otp != "123456":  # Mock OTP - replace with actual verification
+            await session.commit()
+            raise HTTPException(status_code=400, detail="Invalid OTP")
+
+        # Mark OTP as verified
+        otp_session.status = OTPStatus.VERIFIED
+        otp_session.verified_at = tu.SimplerTimes.get_now_datetime()
+
+        # Get user and update last active
+        user_query = select(UserProfile).where(
+            UserProfile.phone_number == request.phone_number
+        )
+        result = await session.execute(user_query)
+        user = result.scalar_one_or_none()
+
+        if not user:
+            raise HTTPException(status_code=404, detail="User not found")
+
+        if not user.is_active:
+            raise HTTPException(status_code=403, detail="Account deactivated. Please contact support.")
+
+        # Update last active timestamp and set signed in
+        user.last_active_at = tu.SimplerTimes.get_now_datetime()
+        user.is_signed_in = True
+        await session.commit()
+        await session.refresh(user)
+
+        # Generate JWT tokens
+        user = await user.to_bm()
+        access_token, refresh_token = create_jwt_tokens(user.id)
+
+        # Return auth response
+        return w.AuthResponse(
+            access_token=access_token,
+            refresh_token=refresh_token,
+            user=user,
+        )
 
 
 async def logout(
     current_user: UserProfile = Depends(get_current_user),
     session: AsyncSession = Depends(get_db_session_fa),
 ) -> w.SuccessResponse:
-    """POST /api/auth/logout — user logout."""
+    """POST /api/auth/logout - User logout and session termination"""
+
+    # Fetch the user in the current session to ensure changes are tracked
     user_query = select(UserProfile).where(UserProfile.id == current_user.id)
     result = await session.execute(user_query)
     user = result.scalar_one_or_none()
@@ -218,10 +199,12 @@ async def logout(
     if not user:
         raise HTTPException(status_code=404, detail="User not found")
 
+    # Set the user as signed out
     user.is_signed_in = False
     user.last_active_at = tu.SimplerTimes.get_now_datetime()
     await session.commit()
 
+    # Log the logout event
     tu.logger.info(f"User {user.id} logged out successfully")
 
     return w.SuccessResponse(
@@ -234,215 +217,62 @@ async def new_user(
     request: w.NewUserRequest,
     session: AsyncSession = Depends(get_db_session_fa),
 ) -> w.SuccessResponse:
-    """POST /api/auth/register — new user registration."""
-    if not request.name or not request.name.strip():
-        raise HTTPException(status_code=400, detail="Name is required")
-    if not request.email or not request.email.strip():
-        raise HTTPException(status_code=400, detail="Email is required")
-    if not request.password or len(request.password) < 8:
-        raise HTTPException(status_code=400, detail="Password must be at least 8 characters")
-
-    email = request.email.strip().lower()
-
-    try:
-        # Check if email is already registered
-        existing_query = select(UserProfile).where(UserProfile.email == email)
-        result = await session.execute(existing_query)
-        existing_user = result.scalar_one_or_none()
-    except Exception as e:
-        tu.logger.error(f"Register DB query failed (columns may be missing): {e}")
+    """POST /api/auth/register - New user registration"""
+    if not request.name:
         raise HTTPException(
-            status_code=500,
-            detail=f"Database error — the email column may not exist. Run migrations. Detail: {str(e)[:200]}"
+            status_code=400,
+            detail="Name is required for registration of a new user",
         )
+    if not request.phone_number:
+        raise HTTPException(
+            status_code=400,
+            detail="Phone number is required for registration of a new user",
+        )
+
+    # Check if user already exists
+    existing_user_query = select(UserProfile).where(
+        UserProfile.phone_number == request.phone_number
+    )
+    result = await session.execute(existing_user_query)
+    existing_user = result.scalar_one_or_none()
 
     if existing_user:
-        raise HTTPException(status_code=400, detail="An account with this email already exists")
-
-    # Create the new user with a hashed password
-    try:
-        pw_hash = hash_password(request.password)
-        new_user_obj = UserProfile(
-            email=email,
-            password_hash=pw_hash,
-            name=request.name.strip(),
-            phone_verified=False,  # Not verified until email OTP is confirmed
-            role=UserRole.USER,
-        )
-
-        session.add(new_user_obj)
-        await session.flush()  # Get the ID without committing
-
-        # Create and send verification OTP
-        otp_code = await _create_email_otp(session, email, EmailOTPType.VERIFICATION)
-        email_sent = send_verification_otp(email, otp_code, request.name.strip())
-
-        await session.commit()
-
-        if email_sent:
-            return w.SuccessResponse(
-                success=True,
-                message=f"Account created! A verification code has been sent to {email}. Please check your inbox.",
-            )
-        else:
-            # Account created but email not sent (SMTP not configured)
-            return w.SuccessResponse(
-                success=True,
-                message=f"Account created successfully. You can now sign in with {email}.",
-            )
-
-    except Exception as e:
-        tu.logger.error(f"Register DB insert failed: {e}")
         raise HTTPException(
-            status_code=500,
-            detail=f"Failed to create account. Database error: {str(e)[:200]}"
+            status_code=400, detail="User with this phone number already exists"
         )
 
-
-async def verify_email(
-    request: w.VerifyEmailRequest,
-    session: AsyncSession = Depends(get_db_session_fa),
-) -> w.SuccessResponse:
-    """POST /api/auth/verify-email — verify email with OTP."""
-    email = request.email.strip().lower()
-    otp = request.otp.strip()
-
-    if not otp:
-        raise HTTPException(status_code=400, detail="Verification code is required")
-
-    # Find user
-    user_query = select(UserProfile).where(UserProfile.email == email)
-    result = await session.execute(user_query)
-    user = result.scalar_one_or_none()
-
-    if not user:
-        raise HTTPException(status_code=404, detail="Account not found")
-
-    if user.phone_verified:  # phone_verified is used as email_verified
-        return w.SuccessResponse(success=True, message="Email is already verified")
-
-    # Verify the OTP
-    is_valid = await _verify_email_otp(session, email, otp, EmailOTPType.VERIFICATION)
-
-    if not is_valid:
-        raise HTTPException(status_code=400, detail="Invalid or expired verification code. Please request a new one.")
-
-    user.phone_verified = True  # Mark as verified
-    user.last_active_at = tu.SimplerTimes.get_now_datetime()
-    await session.commit()
-
-    tu.logger.info(f"Email verified for user: {email}")
-
-    return w.SuccessResponse(
-        success=True,
-        message="Email verified successfully! You can now sign in.",
+    # Create mock OTP session for registration
+    # In a real implementation, this would interact with an OTP service
+    mock_otp_code = "123456"  # Mock OTP code for testing
+    otp_session = OTPSession(
+        phone_number=request.phone_number,
+        otpless_request_id=str(uuid4()),
+        session_type=OTPSessionType.REGISTER,
+        status=OTPStatus.PENDING,
+        expires_at=tu.SimplerTimes.get_now_datetime() + datetime.timedelta(minutes=10),
     )
 
+    # For development purposes only - log the OTP code
+    print(f"MOCK OTP for {request.phone_number}: {mock_otp_code}")
 
-async def resend_verification(
-    request: w.ResendVerificationRequest,
-    session: AsyncSession = Depends(get_db_session_fa),
-) -> w.SuccessResponse:
-    """POST /api/auth/resend-verification — resend verification OTP."""
-    email = request.email.strip().lower()
-
-    user_query = select(UserProfile).where(UserProfile.email == email)
-    result = await session.execute(user_query)
-    user = result.scalar_one_or_none()
-
-    if not user:
-        # Don't reveal whether the email exists
-        return w.SuccessResponse(
-            success=True,
-            message="If an account exists with this email, a new verification code has been sent.",
-        )
-
-    if user.phone_verified:
-        return w.SuccessResponse(success=True, message="Email is already verified")
-
-    otp_code = await _create_email_otp(session, email, EmailOTPType.VERIFICATION)
-    email_sent = send_verification_otp(email, otp_code, user.name or "")
+    session.add(otp_session)
     await session.commit()
 
-    if not email_sent:
-        raise HTTPException(status_code=500, detail="Failed to send verification email. Please try again later.")
-
-    return w.SuccessResponse(
-        success=True,
-        message="A new verification code has been sent to your email.",
+    # Create new user
+    new_user = UserProfile(
+        phone_number=request.phone_number,
+        name=request.name,
+        phone_verified=True,  # Since this is registration, we mark as verified
+        role=UserRole.USER,
     )
 
-
-async def forgot_password(
-    request: w.ForgotPasswordRequest,
-    session: AsyncSession = Depends(get_db_session_fa),
-) -> w.SuccessResponse:
-    """POST /api/auth/forgot-password — send password reset OTP."""
-    email = request.email.strip().lower()
-
-    user_query = select(UserProfile).where(UserProfile.email == email)
-    result = await session.execute(user_query)
-    user = result.scalar_one_or_none()
-
-    if not user:
-        # Don't reveal whether the email exists (security best practice)
-        return w.SuccessResponse(
-            success=True,
-            message="If an account exists with this email, a password reset code has been sent.",
-        )
-
-    otp_code = await _create_email_otp(session, email, EmailOTPType.PASSWORD_RESET)
-    email_sent = send_password_reset_otp(email, otp_code, user.name or "")
+    session.add(new_user)
     await session.commit()
 
-    if not email_sent:
-        raise HTTPException(status_code=500, detail="Failed to send password reset email. Please try again later.")
-
+    # Return success response
     return w.SuccessResponse(
         success=True,
-        message="If an account exists with this email, a password reset code has been sent.",
-    )
-
-
-async def reset_password(
-    request: w.ResetPasswordRequest,
-    session: AsyncSession = Depends(get_db_session_fa),
-) -> w.SuccessResponse:
-    """POST /api/auth/reset-password — reset password using OTP."""
-    email = request.email.strip().lower()
-    otp = request.otp.strip()
-    new_password = request.new_password
-
-    if not otp:
-        raise HTTPException(status_code=400, detail="Reset code is required")
-    if not new_password or len(new_password) < 8:
-        raise HTTPException(status_code=400, detail="Password must be at least 8 characters")
-
-    # Find user
-    user_query = select(UserProfile).where(UserProfile.email == email)
-    result = await session.execute(user_query)
-    user = result.scalar_one_or_none()
-
-    if not user:
-        raise HTTPException(status_code=404, detail="Account not found")
-
-    # Verify the OTP
-    is_valid = await _verify_email_otp(session, email, otp, EmailOTPType.PASSWORD_RESET)
-
-    if not is_valid:
-        raise HTTPException(status_code=400, detail="Invalid or expired reset code. Please request a new one.")
-
-    # Update password
-    user.password_hash = hash_password(new_password)
-    user.is_signed_in = False  # Force re-login with new password
-    user.last_active_at = tu.SimplerTimes.get_now_datetime()
-    await session.commit()
-
-    tu.logger.info(f"Password reset for user: {email}")
-
-    return w.SuccessResponse(
-        success=True,
-        message="Password reset successfully! You can now sign in with your new password.",
+        message=f"User {request.phone_number} registered successfully",
     )
 
 
@@ -450,18 +280,24 @@ async def get_current_user(
     current_user: UserProfile = Depends(get_current_user),
     session: AsyncSession = Depends(get_db_session_fa),
 ) -> w.User:
-    """GET /api/auth/me — get current user profile."""
+    """GET /api/auth/me - Get current user profile"""
+    # Update last active timestamp
     current_user.last_active_at = tu.SimplerTimes.get_now_datetime()
     await session.commit()
+
+    # Return user profile
     return await current_user.to_bm()
 
 
 async def refresh_jwt(
     request: w.RefreshTokenRequest,
     session: AsyncSession = Depends(get_db_session_fa),
+     settings: Settings = Depends(get_settings),
 ) -> w.AuthResponse:
-    """POST /api/auth/refresh — refresh authentication tokens."""
+    """POST /api/auth/refresh - Refresh authentication tokens"""
+
     try:
+        # Decode and verify refresh token
         payload = jwt.decode(
             request.refresh_token,
             settings.jwt_secret,
@@ -470,6 +306,7 @@ async def refresh_jwt(
     except jwt.InvalidTokenError:
         raise HTTPException(status_code=401, detail="Invalid refresh token")
 
+    # Check if it's a refresh token
     if payload.get("type") != "refresh":
         raise HTTPException(status_code=400, detail="Invalid token type")
 
@@ -477,21 +314,29 @@ async def refresh_jwt(
     if not user_id:
         raise HTTPException(status_code=400, detail="Invalid token payload")
 
+    # Get user
     user_query = select(UserProfile).where(UserProfile.id == user_id)
     result = await session.execute(user_query)
     user = result.scalar_one_or_none()
     if not user:
         raise HTTPException(status_code=404, detail="User not found")
 
+    if not user.is_active:
+        raise HTTPException(status_code=403, detail="Account deactivated. Please contact support.")
+
+    # Check if user is signed in
     if not user.is_signed_in:
         raise HTTPException(status_code=401, detail="User has been logged out")
 
+    # Update last active timestamp
     user.last_active_at = tu.SimplerTimes.get_now_datetime()
     await session.commit()
     await session.refresh(user)
 
+    # Generate new tokens
     access_token, refresh_token = create_jwt_tokens(user.id)
 
+    # Return new auth response
     return w.AuthResponse(
         access_token=access_token,
         refresh_token=refresh_token,

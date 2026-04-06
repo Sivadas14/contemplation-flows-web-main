@@ -1,14 +1,18 @@
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect, useCallback, useRef } from "react";
 import { useLocation, useNavigate, useParams } from "react-router-dom";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import { Pencil, Save, Volume2, Mic, ArrowRight } from "lucide-react";
+import { Pencil, Save, Volume2, Mic, ArrowRight, ArrowLeft, Image as ImageIcon, Music, Video, Download, Loader2, Sparkles, Brain, Timer, BookOpen, PlayIcon, MusicIcon } from "lucide-react";
 import ChatMessage from "@/components/ChatMessage";
 import ExploreMore from "@/components/ExploreMore";
-import ContemplationModal from "@/components/ContemplationModal";
 import InlineMeditationCreator from "@/components/InlineMeditationCreator";
 import UserMenu from "@/components/UserMenu";
-import { chatAPI } from "@/apis/api";
+import { InlineMediaPlayer } from '@/components/InlineMediaPlayer';
+import { AddonsModal } from "@/components/billing/AddonsModal";
+import { chatAPI, contentAPI } from "@/apis/api";
+import { useUsage } from "@/contexts/UsageContext";
+import { toast } from "sonner";
+import { getFullStorageUrl } from "@/lib/storage";
 import type { Message as APIMessage, Conversation, ConversationDetailResponse, ContentGeneration } from "@/apis/wire";
 
 interface Message {
@@ -17,20 +21,25 @@ interface Message {
   isUser: boolean;
   thinking?: string;
   citations?: { name: string; url: string; }[];
-  mediaUrl?: string;
-  mediaType?: "audio" | "video";
+  generatedContents?: {
+    id: string;
+    type: 'image' | 'audio' | 'video';
+    url?: string;
+    status: 'pending' | 'processing' | 'complete' | 'failed';
+    transcript?: string | null;
+  }[];
 }
 
 const Chat = () => {
   const location = useLocation();
   const navigate = useNavigate();
   const { conversationId } = useParams<{ conversationId: string }>();
+  const { usage, refreshUsage, checkQuota } = useUsage();
   const [messages, setMessages] = useState<Message[]>([]);
   const [currentInput, setCurrentInput] = useState("");
   const [isThinking, setIsThinking] = useState(false);
   const [isStreaming, setIsStreaming] = useState(false);
   const [showExploreMore, setShowExploreMore] = useState(false);
-  const [showContemplation, setShowContemplation] = useState(false);
   const [showMeditationCreator, setShowMeditationCreator] = useState(false);
   const [isRecording, setIsRecording] = useState(false);
   const [title, setTitle] = useState("New Conversation");
@@ -40,27 +49,311 @@ const Chat = () => {
   const [isLoadingConversation, setIsLoadingConversation] = useState(false);
   const [hasProcessedInitialQuery, setHasProcessedInitialQuery] = useState(false);
 
+  // Inline image generation states
+  const [generatingImageForMessage, setGeneratingImageForMessage] = useState<string | null>(null);
+  const [imageGenerationContentId, setImageGenerationContentId] = useState<string | null>(null);
+
+  const [imageGenerationError, setImageGenerationError] = useState<string | null>(null);
+
+  const [generatingAudioForMessage, setGeneratingAudioForMessage] = useState<string | null>(null);
+  const [audioGenerationContentId, setAudioGenerationContentId] = useState<string | null>(null);
+  const [audioGenerationError, setAudioGenerationError] = useState<string | null>(null);
+
+  const [generatingVideoForMessage, setGeneratingVideoForMessage] = useState<string | null>(null);
+  const [videoGenerationContentId, setVideoGenerationContentId] = useState<string | null>(null);
+  const [videoGenerationError, setVideoGenerationError] = useState<string | null>(null);
+
+  // Combined state for blocking concurrent generations
+  const generatingContentForMessage = generatingImageForMessage || generatingAudioForMessage || generatingVideoForMessage;
+
+  // Global busy state: strict "one process at a time" rule
+  const isBusy = isThinking || isStreaming || !!generatingContentForMessage;
+
+  // State for full screen player
+  const [selectedMedia, setSelectedMedia] = useState<{ url: string; type: 'audio' | 'video' } | null>(null);
+
+  const messagesEndRef = useRef<HTMLDivElement>(null);
+  const inputRef = useRef<HTMLInputElement>(null);
+  const messagesRef = useRef<Message[]>([]);
+  const sendingRef = useRef(false);
+
+  // Keep messagesRef in sync with messages
+  useEffect(() => {
+    messagesRef.current = messages;
+  }, [messages]);
+
+  // Ref for the scroll container
+  const scrollContainerRef = useRef<HTMLDivElement>(null);
+  const prevMessagesLength = useRef(0);
+
+  // Auto-scroll logic
+  useEffect(() => {
+    const scrollContainer = messagesEndRef.current?.parentElement; // Assuming scroll on parent
+
+    // Check if we should scroll (new message or streaming)
+    const isNewMessage = messages.length > prevMessagesLength.current;
+    const shouldScroll = isNewMessage || isStreaming || isThinking;
+
+    if (shouldScroll) {
+      // Use 'auto' (instant) for streaming to avoid jitter, 'smooth' for new messages
+      const behavior = isStreaming ? 'auto' : 'smooth';
+
+      // Small timeout to ensure DOM is updated
+      setTimeout(() => {
+        messagesEndRef.current?.scrollIntoView({ behavior, block: 'end' });
+      }, 100);
+    }
+
+    prevMessagesLength.current = messages.length;
+  }, [messages, isStreaming, isThinking]);
+
+  // Focus input and scroll to bottom when messages load
+  useEffect(() => {
+    if (!isLoadingConversation && messages.length > 0) {
+      inputRef.current?.focus();
+      // Force scroll to bottom on load
+      setTimeout(() => {
+        messagesEndRef.current?.scrollIntoView({ behavior: 'auto', block: 'end' });
+      }, 100);
+    }
+  }, [isLoadingConversation, messages.length]);
+
+  // Check for checkout redirect and refresh usage
+  useEffect(() => {
+    const urlParams = new URLSearchParams(location.search);
+    const checkoutSuccess = urlParams.get('checkout_success');
+    const sessionId = urlParams.get('session_id');
+    const customerSessionToken = urlParams.get('customer_session_token');
+
+    if (checkoutSuccess === 'true' || sessionId || customerSessionToken) {
+      console.log('🎉 [Chat] Checkout success detected, refreshing usage...');
+
+      // Refresh usage to show new quota
+      refreshUsage();
+
+      // Show success message
+      toast.success("Purchase successful! Your quota has been updated.");
+
+      // Clean up the URL
+      navigate(location.pathname, { replace: true });
+    }
+  }, [location.search, location.pathname, navigate, refreshUsage]);
+
+  // Clear all state when conversationId changes or when going to home chat
+  useEffect(() => {
+    console.log(`💬 [Chat] Mounted/Updated. conversationId: ${conversationId}`);
+
+    setCurrentInput("");
+
+    // Reset states when conversationId becomes undefined (navigating to /chat)
+    if (!conversationId) {
+      setMessages([]);
+      setTitle("New Conversation");
+      setConversationDetail(null);
+      setQuestions([]);
+      setShowExploreMore(false);
+      setShowMeditationCreator(false);
+      setIsEditingTitle(false);
+      // Clear any pending generation states
+      setGeneratingImageForMessage(null);
+      setImageGenerationContentId(null);
+      setImageGenerationError(null);
+      setGeneratingAudioForMessage(null);
+      setAudioGenerationContentId(null);
+      setAudioGenerationError(null);
+      setGeneratingVideoForMessage(null);
+      setVideoGenerationContentId(null);
+      setVideoGenerationError(null);
+    }
+  }, [conversationId]);
+
+  // Polling hook for all content generations
+  useEffect(() => {
+    // Collect all pending/processing content IDs from all messages
+    const getPendingContentIds = (): Set<string> => {
+      const pendingIds = new Set<string>();
+
+      messagesRef.current.forEach(msg => {
+        if (msg.generatedContents) {
+          msg.generatedContents.forEach(content => {
+            if (content.status === 'pending' || content.status === 'processing') {
+              pendingIds.add(content.id);
+            }
+          });
+        }
+      });
+
+      // Also add the current inline generations if active
+      if (imageGenerationContentId) {
+        pendingIds.add(imageGenerationContentId);
+      }
+      if (audioGenerationContentId) {
+        pendingIds.add(audioGenerationContentId);
+      }
+      if (videoGenerationContentId) {
+        pendingIds.add(videoGenerationContentId);
+      }
+
+      return pendingIds;
+    };
+
+    const pendingIds = getPendingContentIds();
+
+    // Only set up polling if there are pending content generations
+    if (pendingIds.size === 0) return;
+
+    const pollContentGenerations = async () => {
+      const currentPendingIds = getPendingContentIds();
+      if (currentPendingIds.size === 0) return;
+
+      // Poll each pending content
+      const pollPromises = Array.from(currentPendingIds).map(async (contentId) => {
+        try {
+          const content = await contentAPI.getContent(contentId);
+
+          console.log(`Polled content ${contentId}:`, content.status, content.content_url);
+
+          // Only update if status changed to complete or failed
+          if (content.status === "complete" || content.status === "failed") {
+            setMessages(prev => prev.map(msg => {
+              // Skip if message doesn't have any generated contents
+              if (!msg.generatedContents || msg.generatedContents.length === 0) {
+                return msg;
+              }
+
+              // Check if this message has the content we're updating
+              const hasContent = msg.generatedContents.some(gc => gc.id === contentId);
+              if (!hasContent) {
+                return msg;
+              }
+
+              // Update the matching content
+              const updatedContents = msg.generatedContents.map(gc => {
+                if (gc.id === contentId) {
+                  const updated = {
+                    ...gc,
+                    status: content.status as 'complete' | 'failed',
+                    url: content.content_url ? getFullStorageUrl(content.content_url) : gc.url,
+                    transcript: content.transcript || gc.transcript
+                  };
+                  console.log(`Updated content in message ${msg.id}:`, updated);
+                  return updated;
+                }
+                return gc;
+              });
+
+              return {
+                ...msg,
+                generatedContents: updatedContents
+              };
+            }));
+
+            // If this was an inline generation, clear the states
+            if (contentId === imageGenerationContentId) {
+              if (content.status === "complete") {
+                setImageGenerationContentId(null);
+                setGeneratingImageForMessage(null);
+                setImageGenerationError(null);
+              } else if (content.status === "failed") {
+                setImageGenerationError("Image generation failed. Please try again.");
+                setImageGenerationContentId(null);
+                setGeneratingImageForMessage(null);
+              }
+            }
+
+            if (contentId === audioGenerationContentId) {
+              if (content.status === "complete") {
+                setAudioGenerationContentId(null);
+                setGeneratingAudioForMessage(null);
+                setAudioGenerationError(null);
+              } else if (content.status === "failed") {
+                setAudioGenerationError("Audio generation failed. Please try again.");
+                setAudioGenerationContentId(null);
+                setGeneratingAudioForMessage(null);
+              }
+            }
+
+            if (contentId === videoGenerationContentId) {
+              if (content.status === "complete") {
+                setVideoGenerationContentId(null);
+                setGeneratingVideoForMessage(null);
+                setVideoGenerationError(null);
+              } else if (content.status === "failed") {
+                setVideoGenerationError("Video generation failed. Please try again.");
+                setVideoGenerationContentId(null);
+                setGeneratingVideoForMessage(null);
+              }
+            }
+          }
+        } catch (err) {
+          console.error(`Error polling content ${contentId}:`, err);
+
+          // Only show error for inline generation
+          if (contentId === imageGenerationContentId) {
+            setImageGenerationError(err instanceof Error ? err.message : "Failed to check content status");
+            setImageGenerationContentId(null);
+            setGeneratingImageForMessage(null);
+          }
+        }
+      });
+
+      await Promise.allSettled(pollPromises);
+    };
+
+    // Set up polling interval (3 seconds for all content)
+    const interval = setInterval(pollContentGenerations, 3000);
+
+    // Cleanup
+    return () => clearInterval(interval);
+  }, [
+    imageGenerationContentId, generatingImageForMessage,
+    audioGenerationContentId, generatingAudioForMessage,
+    videoGenerationContentId, generatingVideoForMessage
+  ]);
+
   const loadConversationData = useCallback(async () => {
     if (conversationId) {
+      // Don't reload if we already have this conversation's data
+      if (conversationDetail?.conversation.id === conversationId && messages.length > 0) {
+        return;
+      }
       setIsLoadingConversation(true);
       try {
-        // Load existing conversation from API
         const response = await chatAPI.getConversation(conversationId);
         setConversationDetail(response);
         setTitle(response.conversation.title || "Untitled Conversation");
 
-        // Convert API messages to local message format
-        const convertedMessages: Message[] = response.messages.map((msg: APIMessage) => ({
-          id: msg.id,
-          content: msg.content,
-          isUser: msg.role === 'user',
-          citations: msg.citations || [],
-        }));
+        // Convert API messages to local message format with generated content
+        const convertedMessages: Message[] = response.messages.map((msg: APIMessage) => {
+          // Check if this message has associated content generations
+          // Get all content generations for this message
+          const contentGenerations = response.content_generations?.filter(
+            cg => cg.message_id === msg.id
+          ) || [];
+
+          // Map all content generations
+          const generatedContents = contentGenerations.map(cg => ({
+            id: cg.id,
+            type: cg.content_type,
+            url: cg.content_url ? getFullStorageUrl(cg.content_url) : undefined,
+            status: cg.status,
+            transcript: cg.transcript
+          }));
+
+          return {
+            id: msg.id,
+            content: msg.content,
+            isUser: msg.role.toLowerCase() === 'user',
+            citations: msg.citations || [],
+            ...(generatedContents.length > 0 && { generatedContents })
+          };
+        });
+
         setMessages(convertedMessages);
 
         // Extract follow-up questions from the latest assistant message that has them
         const latestAssistantMessageWithQuestions = response.messages
-          .filter((msg: APIMessage) => msg.role === 'assistant' && msg.follow_up_questions?.questions?.length)
+          .filter((msg: APIMessage) => msg.role.toLowerCase() === 'assistant' && msg.follow_up_questions?.questions?.length)
           .pop();
 
         if (latestAssistantMessageWithQuestions?.follow_up_questions?.questions) {
@@ -72,129 +365,227 @@ const Chat = () => {
         setIsLoadingConversation(false);
       }
     }
-  }, [conversationId]);
+  }, [conversationId, conversationDetail, messages.length]);
 
   useEffect(() => {
     loadConversationData();
   }, [loadConversationData]);
 
   const handleSendMessage = useCallback(async (message: string) => {
-    if (!conversationId) {
-      console.error("No conversation ID available");
-      return;
-    }
+    if (isBusy || sendingRef.current) return;
+    if (!message.trim()) return;
 
-    const userMessage: Message = {
-      id: Date.now().toString(),
-      content: message,
-      isUser: true,
-    };
-
-    setMessages(prev => [...prev, userMessage]);
-    setCurrentInput("");
+    sendingRef.current = true;
     setIsThinking(true);
 
-    // Create a placeholder AI message for streaming
-    const aiMessageId = `ai-${Date.now()}`;
-    const aiMessage: Message = {
-      id: aiMessageId,
-      content: "",
-      isUser: false,
-      citations: [],
-    };
-
-    // Add the empty AI message that we'll update during streaming
-    setMessages(prev => [...prev, aiMessage]);
-    setIsThinking(false);
-    setIsStreaming(true);
-
     try {
-      // Send message to the conversation with streaming
-      const response = await chatAPI.chatCompletion(
-        conversationId,
-        {
-          message: message,
-          stream: true,
-          mock: false,
-        },
-        // onChunk callback for streaming updates
-        (streamingContent: string) => {
-          setMessages(prev => prev.map(msg =>
-            msg.id === aiMessageId
-              ? { ...msg, content: streamingContent }
-              : msg
-          ));
-        }
-      );
+      let currentConversationId = conversationId;
+      const command = message.trim().toLowerCase();
 
-      setIsStreaming(false);
-
-      // Final update with complete response data
-      setMessages(prev => prev.map(msg =>
-        msg.id === aiMessageId
-          ? {
-            ...msg,
-            id: response.message_id || aiMessageId,
-            content: response.message,
-            citations: response.citations || [],
+      // Check for generation commands
+      if (['image', 'audio', 'video'].includes(command)) {
+        const latestAssistantMessage = messages.filter(msg => !msg.isUser).pop();
+        if (latestAssistantMessage) {
+          setCurrentInput("");
+          if (command === 'image') {
+            handleGenerateImage(latestAssistantMessage.id);
+          } else if (command === 'audio') {
+            handleGenerateAudio(latestAssistantMessage.id);
+          } else if (command === 'video') {
+            handleGenerateVideo(latestAssistantMessage.id);
           }
-          : msg
-      ));
-
-      // Store questions for explore more functionality
-      if (response.questions && response.questions.length > 0) {
-        setQuestions(response.questions);
+          return; // Exit handleSendMessage
+        }
       }
 
-      // Update conversation title if it was generated
-      if (response.title && (!conversationDetail?.conversation.title || conversationDetail.conversation.title === "New Conversation")) {
-        setTitle(response.title);
-        if (conversationDetail) {
+      if (!currentConversationId) {
+        if (!checkQuota('chat')) return;
+
+        try {
+          const newConversation = await chatAPI.createConversation({ messages: [] });
+          currentConversationId = newConversation.id;
+
+          // Update URL and trigger router update
+          navigate(`/chat/${newConversation.id}`, { replace: true });
+
+          // Update local state to ensure header and other components see the CID immediately
+          setTitle("New Conversation");
           setConversationDetail({
-            ...conversationDetail,
-            conversation: { ...conversationDetail.conversation, title: response.title }
+            conversation: newConversation,
+            messages: [],
+            content_generations: []
           });
+
+          // Notify sidebar to refresh
+          window.dispatchEvent(new CustomEvent('refresh-conversations'));
+        } catch (error) {
+          console.error("Failed to create conversation:", error);
+          // Show error to user
+          setMessages(prev => [...prev, {
+            id: Date.now().toString(),
+            content: "Failed to start conversation. Please try again.",
+            isUser: false,
+          }]);
+          return;
         }
       }
-    } catch (error) {
-      console.error("Failed to send message:", error);
+
+      const userMessage: Message = {
+        id: Date.now().toString(),
+        content: message,
+        isUser: true,
+      };
+
+      setMessages(prev => [...prev, userMessage]);
+      setCurrentInput("");
+      setIsThinking(true);
+
+      // Create a placeholder AI message for streaming
+      const aiMessageId = `ai-${Date.now()}`;
+      const aiMessage: Message = {
+        id: aiMessageId,
+        content: "",
+        isUser: false,
+        citations: [],
+      };
+
+      setMessages(prev => [...prev, aiMessage]);
       setIsThinking(false);
-      setIsStreaming(false);
+      setIsStreaming(true);
 
-      // Replace the placeholder message with an appropriate error message
-      let errorMessage = "Sorry, I encountered an error while processing your message. Please try again.";
-
-      if (error instanceof Error) {
-        if (error.message.includes('Network')) {
-          errorMessage = "Network error. Please check your connection and try again.";
-        } else if (error.message.includes('401')) {
-          errorMessage = "Authentication error. Please sign in again.";
-        } else if (error.message.includes('timeout')) {
-          errorMessage = "Request timed out. Please try again.";
-        }
-      }
-
-      setMessages(prev => prev.map(msg =>
-        msg.id === aiMessageId
-          ? {
-            ...msg,
-            content: errorMessage
+      try {
+        const response = await chatAPI.chatCompletion(
+          currentConversationId!,
+          {
+            message: message,
+            stream: true,
+            mock: false,
+          },
+          (streamingContent: string) => {
+            setMessages(prev => prev.map(msg =>
+              msg.id === aiMessageId
+                ? { ...msg, content: streamingContent }
+                : msg
+            ));
           }
-          : msg
-      ));
-    }
-  }, [conversationId]);
+        );
 
-  // Handle initial query from navigation state
+        setIsStreaming(false);
+
+        // Update with complete response and check for content generations
+        const updatedMessage = {
+          id: response.message_id || aiMessageId,
+          content: response.message,
+          isUser: false,
+          citations: response.citations || [],
+        };
+
+        setMessages(prev => prev.map(msg =>
+          msg.id === aiMessageId ? updatedMessage : msg
+        ));
+
+        // Store questions for explore more functionality
+        if (response.questions && response.questions.length > 0) {
+          setQuestions(response.questions);
+        }
+
+        // Update conversation title if it was generated
+        const currentTitle = title || conversationDetail?.conversation.title;
+        const isDefaultTitle = !currentTitle || currentTitle === "New Conversation" || currentTitle === "Untitled Conversation";
+
+        if (response.title && isDefaultTitle) {
+          setTitle(response.title);
+          if (conversationDetail) {
+            setConversationDetail({
+              ...conversationDetail,
+              conversation: { ...conversationDetail.conversation, title: response.title }
+            });
+          }
+          // Notify sidebar
+          window.dispatchEvent(new CustomEvent('refresh-conversations'));
+        }
+
+        // Note: We don't reload conversation data here to avoid unnecessary page refreshes
+        // The conversation will reload when:
+        // 1. User navigates to a different conversation
+        // 2. Image generation completes (handled by polling hook)
+        // 3. User manually refreshes the page
+
+        // Refresh usage stats
+        refreshUsage();
+
+        // Auto-update title if it's a new conversation or default title
+        if (isDefaultTitle && currentConversationId) {
+          try {
+            // Small delay to ensure DB is updated with messages
+            setTimeout(async () => {
+              // chatAPI.getConversation(conversationId)
+
+              try {
+                const updatedConversation = await chatAPI.getConversation(currentConversationId!);
+
+                if (updatedConversation.conversation.title) {
+                  setTitle(updatedConversation.conversation.title);
+                  if (conversationDetail) {
+                    setConversationDetail({
+                      ...conversationDetail,
+                      conversation: { ...conversationDetail.conversation, title: updatedConversation.conversation.title }
+                    });
+                  }
+                  // Notify sidebar
+                  window.dispatchEvent(new CustomEvent('refresh-conversations'));
+                }
+              } catch (titleError) {
+                console.error("Failed to auto-generate title:", titleError);
+              }
+            }, 500);
+          } catch (e) {
+            console.error("Title generation timer error:", e);
+          }
+        }
+
+      } catch (error) {
+        console.error("Failed to send message:", error);
+        setIsThinking(false);
+        setIsStreaming(false);
+
+        let errorMessage = "Sorry, I encountered an error while processing your message. Please try again.";
+
+        if (error instanceof Error) {
+          if (error.message.includes('Network')) {
+            errorMessage = "Network error. Please check your connection and try again.";
+          } else if (error.message.includes('401')) {
+            errorMessage = "Authentication error. Please sign in again.";
+          } else if (error.message.includes('timeout')) {
+            errorMessage = "Request timed out. Please try again.";
+          }
+        }
+
+        setMessages(prev => prev.map(msg =>
+          msg.id === aiMessageId
+            ? { ...msg, content: errorMessage }
+            : msg
+        ));
+      }
+    } finally {
+      sendingRef.current = false;
+      setIsThinking(false);
+    }
+  }, [conversationId, messages, isBusy, navigate, checkQuota, refreshUsage, loadConversationData, conversationDetail]);
+
   useEffect(() => {
     const initialQuery = location.state?.initialQuery;
-    if (initialQuery && conversationId && !hasProcessedInitialQuery && !isLoadingConversation) {
+    // Handle initial query even if no conversation ID yet
+    if (initialQuery && !hasProcessedInitialQuery && !isLoadingConversation) {
       setHasProcessedInitialQuery(true);
-      // Instead of sending immediately, put the query in the input field
       if (initialQuery.trim()) {
         setCurrentInput(initialQuery.trim());
+        // Auto-focus the input with the initial query
+        setTimeout(() => {
+          inputRef.current?.focus();
+        }, 100);
       }
-      // Clear the navigation state to prevent re-processing on page refresh
+      // Clear state but don't replace URL yet if we are on /chat
       navigate(location.pathname, { replace: true, state: {} });
     }
   }, [conversationId, location.state?.initialQuery, hasProcessedInitialQuery, isLoadingConversation, location.pathname, navigate]);
@@ -209,9 +600,10 @@ const Chat = () => {
             conversation: { ...conversationDetail.conversation, title: title.trim() }
           });
         }
+        // Notify sidebar
+        window.dispatchEvent(new CustomEvent('refresh-conversations'));
       } catch (error) {
         console.error("Failed to update title:", error);
-        // Revert title on error
         setTitle(conversationDetail?.conversation.title || "Untitled Conversation");
       }
     }
@@ -229,53 +621,348 @@ const Chat = () => {
   };
 
   const handleExploreMore = () => {
-    // Close other modals first
-    setShowContemplation(false);
     setShowMeditationCreator(false);
     setShowExploreMore(!showExploreMore);
   };
 
   const handleMeditationGuide = () => {
-    // Close other modals first
-    setShowContemplation(false);
     setShowExploreMore(false);
     setShowMeditationCreator(!showMeditationCreator);
   };
 
-  const generateContemplationCard = () => {
-    // Close other modals first
-    setShowExploreMore(false);
-    setShowMeditationCreator(false);
-    setShowContemplation(true);
+  // Inline image generation handler
+  const handleGenerateImage = async (messageId: string) => {
+    if (isBusy) {
+      toast.error("Please wait for the current process to finish.");
+      return;
+    }
+    // If no conversation ID (shouldn't happen if message exists), we can't generate
+    if (!conversationId || !messageId) {
+      setImageGenerationError("Missing conversation or message information");
+      return;
+    }
+    console.log(usage);
+
+    // Validation for Image Cards
+    // Check remaining cards
+    // Handle potential string vs number just in case, though schema says number
+    if (!checkQuota('image')) return;
+
+    setGeneratingImageForMessage(messageId);
+    setImageGenerationError(null);
+
+    try {
+      const response = await contentAPI.createContent({
+        conversation_id: conversationId,
+        message_id: messageId,
+        mode: "image"
+      });
+
+      // Immediately add the pending content to the message
+      setMessages(prev => prev.map(msg => {
+        if (msg.id === messageId) {
+          const existingContents = msg.generatedContents || [];
+          return {
+            ...msg,
+            generatedContents: [
+              ...existingContents,
+              {
+                id: response.id,
+                type: 'image' as const,
+                status: 'pending' as const,
+                url: undefined,
+                transcript: null
+              }
+            ]
+          };
+        }
+        return msg;
+      }))
+
+        ;
+
+      console.log(`Started image generation with contentId: ${response.id} for message: ${messageId}`);
+      setImageGenerationContentId(response.id);
+      refreshUsage();
+      // Polling will start automatically via the useEffect hook
+    } catch (error) {
+      console.error("Failed to initiate image generation:", error);
+      setImageGenerationError(error instanceof Error ? error.message : "Failed to start image generation");
+      setGeneratingImageForMessage(null);
+    }
+  };
+
+  const handleGenerateAudio = async (messageId: string, length?: string) => {
+    if (isBusy) {
+      console.log('Content generation already in progress');
+      return;
+    }
+
+    if (!conversationId || !messageId) {
+      setAudioGenerationError("Missing conversation or message information");
+      return;
+    }
+
+    if (!checkQuota('audio')) return;
+
+    setGeneratingAudioForMessage(messageId);
+    setAudioGenerationError(null);
+
+    try {
+      const response = await contentAPI.createContent({
+        conversation_id: conversationId,
+        message_id: messageId,
+        mode: "audio",
+        length: length // Pass the length parameter
+      });
+
+      setMessages(prev => prev.map(msg => {
+        if (msg.id === messageId) {
+          const existingContents = msg.generatedContents || [];
+          return {
+            ...msg,
+            generatedContents: [
+              ...existingContents,
+              {
+                id: response.id,
+                type: 'audio' as const,
+                status: 'pending' as const,
+                url: undefined,
+                transcript: null
+              }
+            ]
+          };
+        }
+        return msg;
+      }));
+
+      console.log(`Started audio generation with contentId: ${response.id} for message: ${messageId}`);
+      setAudioGenerationContentId(response.id);
+      refreshUsage();
+    } catch (error) {
+      console.error("Failed to initiate audio generation:", error);
+      setAudioGenerationError(error instanceof Error ? error.message : "Failed to start audio generation");
+      setGeneratingAudioForMessage(null);
+    }
+  };
+
+  const handleGenerateVideo = async (messageId: string, length?: string) => {
+    if (isBusy) {
+      console.log('Content generation already in progress');
+      return;
+    }
+
+    if (!conversationId || !messageId) {
+      setVideoGenerationError("Missing conversation or message information");
+      return;
+    }
+
+    if (!checkQuota('video')) return;
+
+    setGeneratingVideoForMessage(messageId);
+    setVideoGenerationError(null);
+
+    try {
+      const response = await contentAPI.createContent({
+        conversation_id: conversationId,
+        message_id: messageId,
+        mode: "video",
+        length: length // Pass the length parameter
+      });
+
+      setMessages(prev => prev.map(msg => {
+        if (msg.id === messageId) {
+          const existingContents = msg.generatedContents || [];
+          return {
+            ...msg,
+            generatedContents: [
+              ...existingContents,
+              {
+                id: response.id,
+                type: 'video' as const,
+                status: 'pending' as const,
+                url: undefined,
+                transcript: null
+              }
+            ]
+          };
+        }
+        return msg;
+      }));
+
+      console.log(`Started video generation with contentId: ${response.id} for message: ${messageId}`);
+      setVideoGenerationContentId(response.id);
+      refreshUsage();
+    } catch (error) {
+      console.error("Failed to initiate video generation:", error);
+      setVideoGenerationError(error instanceof Error ? error.message : "Failed to start video generation");
+      setGeneratingVideoForMessage(null);
+    }
+  };
+
+  const handleGenerateMeditation = (options: { mode: 'audio' | 'video', length: string }) => {
+    const lastAssistantMessage = messages.filter(msg => !msg.isUser).pop();
+    if (!lastAssistantMessage) return;
+
+    if (options.mode === 'audio') {
+      handleGenerateAudio(lastAssistantMessage.id, options.length);
+    } else {
+      handleGenerateVideo(lastAssistantMessage.id, options.length);
+    }
   };
 
   const handleNewChat = () => {
-    navigate("/");
+    navigate("/chat");
+  };
+
+  const renderGeneratedContentThumbnail = (contents: Message['generatedContents'], messageId: string) => {
+    if (!contents || contents.length === 0) return null;
+
+    return (
+      <div className="flex flex-col gap-4 mt-4">
+        {contents.map((content) => {
+          // Show loading state for pending/processing content
+          if (content.status === 'pending' || content.status === 'processing') {
+            if (content.type === 'image') {
+              return (
+                <div key={content.id} className="relative overflow-hidden rounded-lg bg-[#ECE5DF] aspect-[3/4] w-full max-w-[400px] h-[250px] flex items-center justify-center">
+                  <div className="w-10 h-10 border-4 border-gray-300 border-t-gray-500 rounded-full animate-spin"></div>
+                </div>
+              );
+            } else {
+              const Icon = content.type === 'video' ? PlayIcon : MusicIcon;
+              const label = content.type === 'video' ? 'Guided Meditation Video...' : 'Guided Meditation Audio...';
+              return (
+                <div key={content.id} className="flex items-center gap-3 p-4 bg-[#ECE5DF] rounded-lg border border-[#d05e2d]">
+                  <div className="relative flex-shrink-0">
+                    <Icon className="w-5 h-5 text-[#d05e2d] animate-pulse" />
+                  </div>
+                  <div className="flex-1">
+                    <p className="text-sm font-medium text-[#472b20] animate-pulse">{label}</p>
+                    <p className="text-xs text-gray-500 mt-1 animate-pulse">This may take a few moments</p>
+                  </div>
+                </div>
+              );
+            }
+          }
+
+          // Show error state for failed content
+          if (content.status === 'failed') {
+            return (
+              <div key={content.id} className="p-4 bg-red-50 border border-red-200 rounded-lg">
+                <p className="text-sm text-red-600">Failed to generate {content.type}. Please try again.</p>
+                <Button
+                  variant="outline"
+                  size="sm"
+                  className="mt-2 text-xs h-7"
+                  onClick={() => {
+                    if (content.type === 'image') handleGenerateImage(messageId);
+                    else if (content.type === 'audio') handleGenerateAudio(messageId);
+                    else if (content.type === 'video') handleGenerateVideo(messageId);
+                  }}
+                  disabled={isBusy}
+                >
+                  Try Again
+                </Button>
+              </div>
+            );
+          }
+
+          if (content.status !== 'complete' || !content.url) return null;
+
+          switch (content.type) {
+            case 'image':
+              return (
+                <div key={content.id} className="group relative inline-block max-w-[400px]">
+                  <img
+                    src={content.url}
+                    alt="Generated image"
+                    className="rounded-lg  max-w-full h-auto"
+                    style={{ maxWidth: '100%', height: 'auto' }}
+                  />
+                  <div className="absolute top-3 right-3 opacity-0 group-hover:opacity-100 transition-opacity duration-200">
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      className="bg-black/50 hover:bg-black/70 text-white rounded-full h-9 w-9 p-0 backdrop-blur-sm"
+                      onClick={async () => {
+                        try {
+                          const response = await fetch(content.url!);
+                          const blob = await response.blob();
+                          const url = window.URL.createObjectURL(blob);
+                          const link = document.createElement('a');
+                          link.download = 'contemplation-card.png';
+                          link.href = url;
+                          link.click();
+                          window.URL.revokeObjectURL(url);
+                        } catch (error) {
+                          console.error("Failed to download image:", error);
+                        }
+                      }}
+                    >
+                      <Download className="w-4 h-4" />
+                    </Button>
+                  </div>
+                </div>
+              );
+
+            case 'audio':
+              return (
+                <InlineMediaPlayer
+                  key={content.id}
+                  url={content.url}
+                  type="audio"
+                  transcript={content.transcript}
+                />
+              );
+
+            case 'video':
+              return (
+                <InlineMediaPlayer
+                  key={content.id}
+                  url={content.url}
+                  type="video"
+                  transcript={content.transcript}
+                  onOpen={() => {
+                    if (content.url) {
+                      setSelectedMedia({ url: content.url, type: 'video' });
+                      setShowMeditationCreator(true);
+                    }
+                  }}
+                />
+              );
+
+            default:
+              return null;
+          }
+        })}
+      </div>
+    );
   };
 
   return (
-    <div className="min-h-screen bg-white flex flex-col">
-      {/* Header */}
-      <div className="p-6 bg-gradient-to-b from-white to-transparent">
-        <div className="flex justify-between items-start">
-          {/* Left spacer - invisible but takes up space */}
-          <div className="flex items-center gap-3 opacity-0 pointer-events-none">
-            <Button variant="outline" className="rounded-lg">
-              <Pencil className="w-4 h-4 mr-2" />
-              New Chat
+    <div className="flex flex-col flex-1 bg-[#F5F0EC] relative h-full overflow-y-auto">
+      {/* Header - Minimal for Title - Only show when there's a conversation ID */}
+      {conversationId && !isLoadingConversation && (
+        <div className="sticky top-0 h-14 px-2 md:px-4 flex items-center justify-between border-b border-[#ECE5DF] bg-[#F5F0EC]/80 backdrop-blur-xl z-30 shrink-0">
+          <div className="flex items-center md:hidden">
+            <Button
+              variant="ghost"
+              size="icon"
+              onClick={() => navigate("/")}
+              className="text-[#472B20]"
+            >
+              <ArrowLeft className="h-5 w-5" />
             </Button>
-            <UserMenu />
           </div>
 
-          {/* Centered Title */}
-          <div className="group flex items-center gap-2 absolute left-1/2 transform -translate-x-1/2">
+          <div className="flex-1 flex justify-center">
             {isEditingTitle ? (
-              <>
+              <div className="flex items-center gap-2 max-w-full px-4">
                 <Input
                   value={title}
                   onChange={(e) => setTitle(e.target.value)}
-                  className="text-4xl font-light text-brand-heading h-auto p-0 border-none focus-visible:ring-0 bg-transparent shadow-none text-4xl text-center"
-                  style={{ fontSize: 'inherit', lineHeight: 'inherit' }}
+                  className="text-sm font-medium text-gray-900 h-8 px-2 py-1 bg-transparent text-center min-w-[150px] md:min-w-[200px]"
                   autoFocus
                   onBlur={() => handleTitleSave()}
                   onKeyDown={(e) => {
@@ -285,183 +972,256 @@ const Chat = () => {
                     }
                   }}
                 />
-                <Button onClick={() => handleTitleSave()} variant="ghost" size="icon" className="h-9 w-9 shrink-0">
-                  <Save className="w-5 h-5 text-gray-500" />
+                <Button
+                  onClick={() => handleTitleSave()}
+                  variant="ghost"
+                  size="icon"
+                  className="h-8 w-8 shrink-0 text-green-600 hover:bg-green-50 rounded-full"
+                >
+                  <Save className="w-3.5 h-3.5" />
                 </Button>
-              </>
+              </div>
             ) : (
-              <>
-                <h1 className="text-4xl font-light text-brand-heading text-center">
+              <button
+                className="flex items-center gap-2 px-2 md:px-3 py-1.5 rounded-lg hover:bg-[#ECE5DF] transition-colors group max-w-full"
+                onClick={() => setIsEditingTitle(true)}
+              >
+                <h1 className="text-sm font-medium text-gray-700 truncate max-w-[200px] md:max-w-[300px]">
                   {title}
                 </h1>
-                <Button onClick={() => setIsEditingTitle(true)} variant="ghost" size="icon" className="h-9 w-9 shrink-0 opacity-0 group-hover:opacity-100 transition-opacity">
-                  <Pencil className="w-5 h-5 text-gray-500" />
-                </Button>
-              </>
+                <Pencil className="w-3 h-3 text-gray-400 group-hover:text-gray-600 opacity-0 group-hover:opacity-100 transition-all shrink-0" />
+              </button>
             )}
           </div>
 
-          {/* Right side controls */}
-          <div className="flex items-center gap-3">
-            <Button onClick={handleNewChat} variant="outline" className="rounded-lg">
-              <Pencil className="w-4 h-4 mr-2" />
-              New Chat
-            </Button>
-            <UserMenu />
+          {/* Spacer for mobile to keep title centered */}
+          <div className="w-10 md:hidden" />
+        </div>
+      )}
+
+
+      {/* Loading State - Centered in full viewport */}
+      {isLoadingConversation && (
+        <div className="absolute inset-0 flex items-center justify-center z-40">
+          <div className="text-center">
+            <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-brand-button mx-auto mb-4"></div>
+            <p className="text-brand-button">Loading conversation...</p>
           </div>
         </div>
-      </div>
+      )}
 
-      {/* Messages */}
-      <div className="flex-1 overflow-y-auto p-6 max-w-4xl mx-auto w-full">
-        {isLoadingConversation && (
-          <div className="mb-6">
-            <div className="text-brand-button text-sm mb-2">Loading conversation...</div>
-            <div className="animate-pulse h-4 bg-orange-200 rounded w-1/2"></div>
+      {/* Messages Container */}
+      <div className="flex-1 p-4 md:p-6 max-w-[816px] mx-auto w-full">
+
+        {!isLoadingConversation && messages.length === 0 && (
+          <div className="flex flex-col items-center justify-center min-h-[60vh] md:h-full max-w-2xl mx-auto text-center px-4 py-10 md:py-0">
+            <h1 className="text-3xl md:text-5xl font-heading text-brand-heading mb-4 md:mb-6 font-bold text-gray-800">
+              Mindful AI
+            </h1>
+            <p className="text-gray-600 mb-6 md:mb-8 max-w-sm md:max-w-md text-base md:text-lg px-2">
+              How can I help you today?
+            </p>
+
+            {/* Quick Start Questions */}
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 md:gap-4 w-full max-w-2xl mb-8 px-2 md:px-4">
+              {[
+                { text: "How do I start a meditation practice?", icon: Sparkles },
+                { text: "What are mindfulness techniques for stress?", icon: Brain },
+                { text: "Create a 5-minute breathing meditation", icon: Timer },
+                { text: "Explain the benefits of daily reflection", icon: BookOpen }
+              ].map((item, index) => (
+                <button
+                  key={index}
+                  className="flex items-center gap-3 md:gap-4 p-3 md:p-4 text-left bg-white border border-gray-100 rounded-xl md:rounded-2xl hover:border-brand-button hover:shadow-md transition-all duration-200 group"
+                  onClick={() => {
+                    setCurrentInput(item.text);
+                    inputRef.current?.focus();
+                  }}
+                >
+                  <div className="w-8 h-8 md:w-10 md:h-10 rounded-full bg-orange-50 flex items-center justify-center text-brand-button group-hover:scale-110 transition-transform duration-200 shrink-0">
+                    <item.icon className="w-4 h-4 md:w-5 md:h-5" />
+                  </div>
+                  <span className="text-sm font-medium text-gray-700 group-hover:text-gray-900 leading-snug">
+                    {item.text}
+                  </span>
+                </button>
+              ))}
+            </div>
           </div>
         )}
 
-        {!isLoadingConversation && messages.map((message, index) => {
-          // Find the index of the latest assistant message
+        {!isLoadingConversation && messages.length > 0 && messages.map((message, index) => {
           const latestAssistantMessageIndex = messages.map((msg, idx) => ({ msg, idx }))
             .filter(({ msg }) => !msg.isUser)
             .pop()?.idx;
 
           return (
-            <ChatMessage
-              key={message.id}
-              message={message}
-              isStreaming={isStreaming && !message.isUser && index === messages.length - 1}
-              showFeedback={!message.isUser && index === latestAssistantMessageIndex}
-            />
+            <div key={message.id} className="mb-4 md:mb-6">
+              <ChatMessage
+                message={message}
+                isStreaming={isStreaming && !message.isUser && index === messages.length - 1}
+                showFeedback={!message.isUser && index === latestAssistantMessageIndex && !isStreaming}
+              />
+
+              {/* Show generated content thumbnail inline */}
+              {!message.isUser && message.generatedContents && renderGeneratedContentThumbnail(message.generatedContents, message.id)}
+
+              {/* Quick action buttons after the last assistant message */}
+              {/* {!message.isUser && index === latestAssistantMessageIndex && (
+                <div className="flex flex-wrap gap-2 mt-4 ml-12">
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    className="rounded-full text-xs h-8"
+                    onClick={() => handleGenerateImage(message.id)}
+                    disabled={!!generatingImageForMessage}
+                  >
+                    <ImageIcon className="w-3 h-3 mr-1" />
+                    Generate Image
+                  </Button>
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    className="rounded-full text-xs h-8"
+                    onClick={handleMeditationGuide}
+                  >
+                    <Music className="w-3 h-3 mr-1" />
+                    Create Meditation
+                  </Button>
+                </div>
+              )} */}
+            </div>
           );
         })}
-
+        {/* 
         {isThinking && (
-          <div className="mb-6">
-            <div className="text-brand-button text-sm mb-2">thinking...</div>
-            <div className="animate-pulse h-4 bg-orange-200 rounded w-3/4"></div>
-          </div>
-        )}
-
-        {isStreaming && !isThinking && (
-          <div className="mb-6">
-            <div className="flex items-center gap-1">
-              <div className="w-2 h-2 bg-brand-button rounded-full animate-bounce" style={{ animationDelay: '0ms' }}></div>
-              <div className="w-2 h-2 bg-brand-button rounded-full animate-bounce" style={{ animationDelay: '150ms' }}></div>
-              <div className="w-2 h-2 bg-brand-button rounded-full animate-bounce" style={{ animationDelay: '300ms' }}></div>
+          <div className="mb-6 ml-12">
+            <div className="flex items-center gap-2 text-sm text-gray-500">
+              <div className="flex gap-1">
+                <div className="w-1.5 h-1.5 bg-gray-400 rounded-full animate-bounce"></div>
+                <div className="w-1.5 h-1.5 bg-gray-400 rounded-full animate-bounce" style={{ animationDelay: '0.1s' }}></div>
+                <div className="w-1.5 h-1.5 bg-gray-400 rounded-full animate-bounce" style={{ animationDelay: '0.2s' }}></div>
+              </div>
+              thinking...
             </div>
           </div>
-        )}
+        )} */}
 
-        {/* Inline Modals */}
+        <div ref={messagesEndRef} />
+        {/* Inline Explore More */}
         <ExploreMore
           isOpen={showExploreMore}
-          onClose={() => setShowExploreMore(false)}
-          onSelectQuestion={(question) => {
-            setCurrentInput(question);
-            setShowExploreMore(false);
-          }}
           questions={questions}
+          onClose={() => setShowExploreMore(false)}
+          onSelectQuestion={(q) => {
+            setCurrentInput(q);
+            setShowExploreMore(false);
+            setTimeout(() => inputRef.current?.focus(), 100);
+          }}
           inline={true}
-        />
-
-        <InlineMeditationCreator
-          isOpen={showMeditationCreator}
-          onClose={() => setShowMeditationCreator(false)}
-          conversationId={conversationId}
-          messageId={messages.filter(msg => !msg.isUser).pop()?.id}
-          existingContentGenerations={conversationDetail?.content_generations?.filter(cg => cg.content_type === 'audio' || cg.content_type === 'video') || []}
         />
       </div>
 
-      {/* Input - positioned based on message state */}
-      {messages.length === 0 ? (
-        // Centered input when no messages
-        <div className="flex-1 flex items-center justify-center p-6">
-          <div className="relative max-w-2xl w-full mx-auto">
-            <Input
-              value={currentInput}
-              onChange={(e) => setCurrentInput(e.target.value)}
-              onKeyPress={(e) => e.key === "Enter" && handleSendMessage(currentInput)}
-              placeholder="Enter your query..."
-              className="text-lg py-6 pr-32 pl-6 rounded-2xl border-2 border-gray-200 shadow-lg focus:border-brand-button transition-all duration-500 font-body bg-white"
-            />
-            <div className="absolute right-2 top-1/2 transform -translate-y-1/2 flex gap-2">
-              <Button
-                onClick={() => handleSendMessage(currentInput)}
-                variant="ghost"
-                size="sm"
-                className="rounded-full w-8 h-8 bg-brand-button text-white hover:bg-brand-button/90"
-              >
-                <ArrowRight className="w-5 h-5" />
-              </Button>
-            </div>
-          </div>
-        </div>
-      ) : (
-        // Bottom input with action buttons when messages exist
-        <div className="border-t border-gray-200 p-6 transition-all duration-500 ease-in-out">
-          <div className="max-w-4xl mx-auto">
-            {/* Action Buttons with fade-in animation */}
-            <div className="mb-4 flex flex-wrap justify-center gap-3 animate-in fade-in duration-500">
-              <Button
-                onClick={handleExploreMore}
-                variant="outline"
-                className="rounded-full text-brand-body border-brand-button hover:bg-brand-button hover:text-white transition-colors"
-              >
-                {showExploreMore ? 'Close explore' : 'Explore more'}
-              </Button>
-              <Button
-                onClick={generateContemplationCard}
-                variant="outline"
-                className="rounded-full text-brand-body border-brand-button hover:bg-brand-button hover:text-white transition-colors"
-              >
-                Make contemplation card
-              </Button>
-              <Button
-                onClick={handleMeditationGuide}
-                variant="outline"
-                className="rounded-full text-brand-body border-brand-button hover:bg-brand-button hover:text-white transition-colors"
-              >
-                {showMeditationCreator ? 'Close meditation' : 'Meditation Guide'}
-              </Button>
-            </div>
+      {/* Input Area - Fixed at bottom */}
+      {!isLoadingConversation && (
+        <div className="sticky bottom-0 bg-[#F5F0EC]/80 backdrop-blur-xl border-t border-[#ECE5DF] px-3 md:px-4 pt-4 md:pt-4 pb-4 md:pb-[10px] z-20 shrink-0">
+          <div className="max-w-[816px] mx-auto">
 
+
+            {/* Action Buttons - Only show when there are messages */}
+            {messages.length > 0 && (
+              <div className="flex flex-nowrap md:flex-wrap gap-2 mb-3 md:mb-4 justify-start md:justify-center overflow-x-auto pb-2 md:pb-0 scrollbar-hide no-scrollbar">
+                <Button
+                  onClick={handleExploreMore}
+                  disabled={isBusy}
+                  variant="outline"
+                  size="sm"
+                  className="rounded-full h-8 md:h-9 whitespace-nowrap px-3 text-xs md:text-sm"
+                >
+                  Explore More
+                </Button>
+                <Button
+                  onClick={() => {
+                    const lastAssistantMessage = messages.filter(msg => !msg.isUser).pop();
+                    if (lastAssistantMessage) {
+                      handleGenerateImage(lastAssistantMessage.id);
+                    }
+                  }}
+                  disabled={isBusy}
+                  variant="outline"
+                  size="sm"
+                  className="rounded-full h-8 md:h-9 whitespace-nowrap px-3 text-xs md:text-sm"
+                >
+                  <ImageIcon className="w-3 md:w-3.5 h-3 md:h-3.5 mr-1 md:mr-1.5" />
+                  Image
+                </Button>
+                <Button
+                  onClick={handleMeditationGuide}
+                  disabled={isBusy}
+                  variant="outline"
+                  size="sm"
+                  className="rounded-full h-8 md:h-9 whitespace-nowrap px-3 text-xs md:text-sm"
+                >
+                  <Music className="w-3 md:w-3.5 h-3 md:h-3.5 mr-1 md:mr-1.5" />
+                  Meditation
+                </Button>
+              </div>
+            )}
+
+            {/* Input with mic button */}
             <div className="relative max-w-2xl mx-auto">
               <Input
+                ref={inputRef}
                 value={currentInput}
                 onChange={(e) => setCurrentInput(e.target.value)}
-                onKeyPress={(e) => e.key === "Enter" && handleSendMessage(currentInput)}
-                placeholder="Enter your query..."
-                className="text-lg py-6 pr-32 pl-6 rounded-2xl border-2 border-gray-200 shadow-lg focus:border-brand-button transition-all duration-500 font-body bg-white"
+                onKeyDown={(e) => e.key === "Enter" && handleSendMessage(currentInput)}
+                placeholder="Ask anything"
+                className="flex-1 bg-white border-0 h-12 md:h-11 text-sm md:text-base rounded-[10px] md:rounded-[12px] px-4 md:px-6 focus-visible:ring-brand-button focus-visible:ring-1"
+                disabled={isBusy}
               />
-              <div className="absolute right-2 top-1/2 transform -translate-y-1/2 flex gap-2">
+              <div className="absolute right-1.5 md:right-2 top-1/2 transform -translate-y-1/2 flex gap-1.5 md:gap-2">
+                {/* <Button
+                onClick={handleMicClick}
+                variant="ghost"
+                size="icon"
+                className={`rounded-full w-10 h-10 ${isRecording ? 'bg-red-100 text-red-600' : 'text-gray-500'}`}
+              >
+                <Mic className="w-5 h-5" />
+              </Button> */}
                 <Button
                   onClick={() => handleSendMessage(currentInput)}
-                  variant="ghost"
-                  size="sm"
-                  className="rounded-full w-8 h-8 bg-brand-button text-white hover:bg-brand-button/90"
+                  disabled={!currentInput.trim() || isBusy}
+                  className={`rounded-full w-8 h-8 md:w-10 md:h-10 ${isBusy ? 'bg-gray-300' : 'bg-brand-button hover:bg-brand-button/90'} text-white transition-colors p-0`}
                 >
-                  <ArrowRight className="w-5 h-5" />
+                  <ArrowRight className="w-4 h-4 md:w-5 md:h-5" />
                 </Button>
               </div>
             </div>
+
+            {/* Helper text */}
+            <p className="text-center text-[10px] md:text-xs text-gray-500 mt-2 md:mt-3">
+              Mindful AI can make mistakes. Consider checking important information.
+            </p>
           </div>
         </div>
       )}
 
-      {/* Full Screen Modals */}
-      <ContemplationModal
-        isOpen={showContemplation}
-        onClose={() => setShowContemplation(false)}
+
+      <InlineMeditationCreator
+        isOpen={showMeditationCreator}
+        onClose={() => {
+          setShowMeditationCreator(false);
+          setSelectedMedia(null);
+        }}
         conversationId={conversationId}
-        messageId={messages.filter(msg => !msg.isUser).pop()?.id}
-        existingContentGenerations={conversationDetail?.content_generations?.filter(cg => cg.content_type === 'image') || []}
-        onContentGenerated={() => loadConversationData()}
+        messageId={messages[messages.length - 1]?.id}
+        existingContentGenerations={
+          conversationDetail?.content_generations?.filter(cg => cg.status === 'complete') || []
+        }
+        initialContent={selectedMedia}
+        onGenerate={handleGenerateMeditation}
       />
     </div>
   );
 };
-
 export default Chat;

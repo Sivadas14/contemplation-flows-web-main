@@ -1,3 +1,4 @@
+print("[TRACE] parallel_video.py import start")
 import asyncio
 import tempfile
 import os
@@ -14,6 +15,8 @@ from sqlalchemy import select
 from supabase import Client
 from tuneapi import tu
 
+from src.settings import get_settings
+
 from src.db import (
     ContentGeneration,
     Conversation,
@@ -27,6 +30,7 @@ from src.content.audio import (
 from src.utils.profiler import profile_operation, print_profiler_summary
 from src.settings import get_supabase_client, get_llm
 from src.db import get_db_session, get_background_session
+import hashlib
 
 # Cache for image generation with persistent storage
 _image_cache = {}
@@ -57,21 +61,21 @@ _load_image_cache()
 
 # Pre-generate these common meditation images for faster video generation
 COMMON_MEDITATION_PROMPTS = [
-    "Peaceful zen garden with flowing water and soft sunlight",
-    "Serene mountain lake at sunset with gentle ripples", 
-    "Tranquil forest clearing with dappled morning light",
-    "Misty mountains with flowing clouds at dawn",
-    "Peaceful bamboo grove with soft filtered light",
-    "Quiet temple garden with stone lanterns and cherry blossoms",
-    "Serene pond with lotus flowers and reflections",
-    "Calm desert dunes under a twilight sky",
-    "Peaceful meadow with wildflowers and gentle breeze",
-    "Soft morning light filtering through bamboo leaves"
+    "Peaceful zen garden with flowing water and soft sunlight"
+    # "Serene mountain lake at sunset with gentle ripples", 
+    # "Tranquil forest clearing with dappled morning light",
+    # "Misty mountains with flowing clouds at dawn",
+    # "Peaceful bamboo grove with soft filtered light",
+    # "Quiet temple garden with stone lanterns and cherry blossoms",
+    # "Serene pond with lotus flowers and reflections",
+    # "Calm desert dunes under a twilight sky",
+    # "Peaceful meadow with wildflowers and gentle breeze",
+    # "Soft morning light filtering through bamboo leaves"
 ]
 
 def _get_image_cache_key(prompt: str) -> str:
     """Generate cache key for image prompt"""
-    return str(hash(prompt) % 10000)  # Use string for better pickle compatibility
+    return hashlib.sha256(prompt.encode()).hexdigest()[:16] # Use string for better pickle compatibility
 
 async def pre_generate_common_images():
     """Pre-generate common meditation images for faster video generation"""
@@ -115,14 +119,15 @@ async def generate_and_cache_image(prompt: str):
 
 class ParallelVideoGenerator:
     def __init__(self):
-        self.spb_client = get_supabase_client()
+        self.spb_client = get_supabase_client(get_settings())
 
-    async def generate_video_parallel_optimized(
+    async def generate_video_parallel(
         self,
         session: AsyncSession,
         conversation_id: str,
         message_id: str,
         content_id: str,
+        length: str = None  # Add length parameter
     ) -> Tuple[str, str]:
         """Generate video content with TRUE parallelization using streaming audio"""
         
@@ -141,7 +146,8 @@ class ParallelVideoGenerator:
         # Step 3: Generate image prompt and transcript in parallel (no DB operations)
         async with profile_operation("parallel_transcript_and_image") as op:
             image_prompt = await self._generate_image_prompt_cached()
-            transcript_task = self._generate_transcript_optimized(source_content)
+        # Task 2: Generate transcript optimized for video
+            transcript_task = self.generate_transcript(source_content, length)  # Pass length
             image_task = self._generate_image_cached(image_prompt)
             
             transcript, pil_image = await asyncio.gather(transcript_task, image_task)
@@ -258,7 +264,7 @@ class ParallelVideoGenerator:
             )
 
             # Use communicate() to send audio data and wait for completion
-            stdout, stderr = process.communicate(input=audio_bytes, timeout=120)
+            stdout, stderr = process.communicate(input=audio_bytes, timeout=3600)
             
             if process.returncode != 0:
                 raise Exception(f"FFmpeg failed: {stderr.decode()}")
@@ -325,7 +331,7 @@ class ParallelVideoGenerator:
                 pass  # Use software encoding
 
             # Run FFmpeg with timeout
-            result = subprocess.run(cmd, capture_output=True, text=True, timeout=120)
+            result = subprocess.run(cmd, capture_output=True, text=True, timeout=3600)
             
             if result.returncode != 0:
                 raise Exception(f"FFmpeg failed: {result.stderr}")
@@ -371,9 +377,12 @@ class ParallelVideoGenerator:
         """Generate image prompt"""
         return random.choice(CONTEMPLATION_PROMPTS)
 
-    async def _generate_transcript(self, source_content: str) -> str:
-        """Generate meditation transcript"""
-        return await generate_meditation_transcript_optimized(source_content)
+    async def generate_transcript(self, source_content, length: str = None):
+        """Generate transcript in parallel"""
+        async with profile_operation("video_transcript_generation") as op:
+            transcript = await generate_meditation_transcript_optimized(source_content, length)
+            op.finish(transcript_length=len(transcript))
+            return transcript
 
     async def _generate_image(self, prompt: str) -> Image.Image:
         """Generate image"""

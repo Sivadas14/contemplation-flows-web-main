@@ -1,7 +1,8 @@
-from fastapi import BackgroundTasks, Depends, Query, HTTPException
+from typing import List, Optional
+from fastapi import BackgroundTasks, Depends, Query, HTTPException, APIRouter
 from supabase import Client
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import select
+from sqlalchemy import select, desc
 from uuid import UUID
 import uuid
 
@@ -14,18 +15,47 @@ from src.db import (
     Conversation,
 )
 from src.dependencies import get_current_user
-from src.settings import get_supabase_client
+from src.settings import get_supabase_client, get_supabase_admin_client
 from src.content.video import generate_video_content
 from src.content.audio import generate_audio_content
 from src.content.image import generate_image_content
 
+# Create helper function to map DB model to Wire model
+def map_to_wire_content(content: ContentGeneration, spb_client: Client) -> w.ContentGeneration:
+    status = "processing"
+    content_url = None
 
-# Meditation Endpoints
+    if content.content_path:
+        status = "complete"
+        try:
+             # Generate presigned URL for download (expires in 1 hour)
+            presigned_response = spb_client.storage.from_(
+                "generations"
+            ).create_signed_url(
+                content.content_path, 315360000  # 10 years expiry
+            )
+            content_url = presigned_response.get("signedURL")
+        except:
+             # If URL generation fails, meaningful fallback or just None
+             pass
+
+    return w.ContentGeneration(
+        id=str(content.id),
+        status=status,
+        conversation_id=str(content.conversation_id),
+        message_id=str(content.message_id),
+        content_type=content.content_type.value,
+        content_url=content_url,
+        created_at=content.created_at,
+        transcript=content.transcript,
+    )
+
+
 async def create_content(
     request: w.ContentGenerationRequest,
     background_tasks: BackgroundTasks,
     session: AsyncSession = Depends(get_db_session_fa),
-    spb_client: Client = Depends(get_supabase_client),
+    spb_client: Client = Depends(get_supabase_admin_client),
 ) -> w.ContentGenerationResponse:
     """POST /api/meditation/create - Generate meditation content"""
 
@@ -66,6 +96,7 @@ async def create_content(
                 content_id,
                 request.conversation_id,
                 request.message_id,
+                request.length,  # Pass the requested length (e.g., "5 min")
             )
 
         case ContentType.VIDEO.value:
@@ -103,6 +134,7 @@ async def create_content(
                 content_id,
                 request.conversation_id,
                 request.message_id,
+                request.length,  # Pass the requested length to video generation too
             )
         case ContentType.IMAGE.value:
             # Get the conversation to get the user_id
@@ -145,25 +177,22 @@ async def create_content(
                 status_code=400,
                 detail="Invalid content type. Must be 'audio', 'video', or 'image'",
             )
-    return w.ContentGenerationResponse(id=content_id)
+    return w.ContentGenerationResponse(id=content_id,status="processing")
 
 
 async def get_content(
     content_id: str,
     current_user: UserProfile = Depends(get_current_user),
     session: AsyncSession = Depends(get_db_session_fa),
-    spb_client: Client = Depends(get_supabase_client),
+    spb_client: Client = Depends(get_supabase_admin_client),
 ) -> w.ContentGeneration | w.ContentGenerationResponse:
-    """GET /api/content/{id} - Get content details and download URLs. If not complete
-    return a ContentGenerationResponse with status processing"""
+    """GET /api/content/{id} - Get content details and download URLs"""
 
-    # Validate UUID format
     try:
         content_uuid = UUID(content_id)
     except ValueError:
         raise HTTPException(status_code=400, detail="Invalid content ID format")
 
-    # Query the content generation record
     query = select(ContentGeneration).where(
         ContentGeneration.id == content_uuid,
         ContentGeneration.user_id == current_user.id,
@@ -174,26 +203,16 @@ async def get_content(
     if not content:
         raise HTTPException(status_code=404, detail="Content not found")
 
-    # Determine status based on content_path availability
     if content.content_path:
-        # Content is complete, generate presigned URL and return full details
         try:
-            # Generate presigned URL for download (expires in 1 hour)
-            presigned_response = spb_client.storage.from_(
-                "generations"
-            ).create_signed_url(
-                content.content_path, 3600  # 1 hour expiry
+            presigned_response = spb_client.storage.from_("generations").create_signed_url(
+                content.content_path, 315360000  # 10 years expiry
             )
 
             if presigned_response.get("error"):
-                # Fallback to processing status if URL generation fails
-                return w.ContentGenerationResponse(
-                    id=str(content.id),
-                    status="processing",
-                )
+                 return w.ContentGenerationResponse(id=str(content.id), status="processing")
 
             content_url = presigned_response.get("signedURL")
-
             return w.ContentGeneration(
                 id=str(content.id),
                 status="complete",
@@ -204,10 +223,100 @@ async def get_content(
                 created_at=content.created_at,
                 transcript=content.transcript,
             )
-
         except Exception:
-            # If URL generation fails, return processing status
             return w.ContentGenerationResponse(id=str(content.id), status="processing")
     else:
-        # Content is still processing
         return w.ContentGenerationResponse(id=str(content.id), status="processing")
+
+
+async def get_image_content(
+    page: int = Query(1, ge=1),
+    limit: int = Query(10, ge=1, le=50),
+    current_user: UserProfile = Depends(get_current_user),
+    session: AsyncSession = Depends(get_db_session_fa),
+    spb_client: Client = Depends(get_supabase_admin_client),
+) -> List[w.ContentGeneration]:
+    """GET /api/content/images - Get all image content for user"""
+    
+    offset = (page - 1) * limit
+    
+    query = (
+        select(ContentGeneration)
+        .where(
+            ContentGeneration.user_id == current_user.id,
+            ContentGeneration.content_type == ContentType.IMAGE
+        )
+        .order_by(desc(ContentGeneration.created_at))
+        .offset(offset)
+        .limit(limit)
+    )
+    
+    result = await session.execute(query)
+    contents = result.scalars().all()
+    
+    return [map_to_wire_content(c, spb_client) for c in contents]
+
+
+async def get_media_content(
+    page: int = Query(1, ge=1),
+    limit: int = Query(10, ge=1, le=50),
+    current_user: UserProfile = Depends(get_current_user),
+    session: AsyncSession = Depends(get_db_session_fa),
+    spb_client: Client = Depends(get_supabase_admin_client),
+) -> List[w.ContentGeneration]:
+    """GET /api/content/media - Get all Audio/Video content for user"""
+    
+    offset = (page - 1) * limit
+    
+    query = (
+        select(ContentGeneration)
+        .where(
+            ContentGeneration.user_id == current_user.id,
+            ContentGeneration.content_type.in_([ContentType.AUDIO, ContentType.VIDEO])
+        )
+        .order_by(desc(ContentGeneration.created_at))
+        .offset(offset)
+        .limit(limit)
+    )
+    
+    result = await session.execute(query)
+    contents = result.scalars().all()
+    
+    return [map_to_wire_content(c, spb_client) for c in contents]
+
+
+async def get_conversation_content(
+    conversation_id: str,
+    page: int = Query(1, ge=1),
+    limit: int = Query(10, ge=1, le=50),
+    current_user: UserProfile = Depends(get_current_user),
+    session: AsyncSession = Depends(get_db_session_fa),
+    spb_client: Client = Depends(get_supabase_admin_client),
+) -> List[w.ContentGeneration]:
+    """GET /api/content/conversation/{conversation_id} - Get content by conversation"""
+    
+    # Verify user owns conversation?
+    # Actually, simply checking ContentGeneration.user_id == current_user.id in the query is enough safely
+    
+    try:
+        conv_uuid = UUID(conversation_id)
+    except ValueError:
+        raise HTTPException(status_code=400, detail="Invalid conversation ID")
+        
+    offset = (page - 1) * limit
+    
+    query = (
+        select(ContentGeneration)
+        .where(
+            ContentGeneration.conversation_id == conv_uuid,
+            ContentGeneration.user_id == current_user.id  # Security check
+        )
+        .order_by(desc(ContentGeneration.created_at))
+        .offset(offset)
+        .limit(limit)
+    )
+    
+    result = await session.execute(query)
+    contents = result.scalars().all()
+    
+    return [map_to_wire_content(c, spb_client) for c in contents]

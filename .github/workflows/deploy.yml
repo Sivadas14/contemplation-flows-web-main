@@ -46,6 +46,8 @@ jobs:
 
           docker build \
             --build-arg VITE_API_BASE_URL=/api \
+            --build-arg VITE_SUPABASE_URL=https://jmmqzddkwsmwdczwtrwq.supabase.co \
+            --build-arg VITE_SUPABASE_ANON_KEY=eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImptbXF6ZGRrd3Ntd2Rjend0cndxIiwicm9sZSI6ImFub24iLCJpYXQiOjE3Njk3NDQ3NTAsImV4cCI6MjA4NTMyMDc1MH0.NRqYCh6j1VmIPckh3S2Tcs5f9xNo9n5Nr1khohlVTU8 \
             -t "$IMAGE_TAG" \
             -t "$IMAGE_LATEST" \
             .

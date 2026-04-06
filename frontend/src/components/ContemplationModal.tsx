@@ -4,6 +4,8 @@ import { Download, Loader2, Eye, X } from "lucide-react";
 import BaseModal from "./BaseModal";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { contentAPI } from "@/apis/api";
+import { getFullStorageUrl } from "@/lib/storage";
+
 import type { ContentGeneration } from "@/apis/wire";
 
 interface ContemplationModalProps {
@@ -30,8 +32,9 @@ const useContentPolling = (contentId: string | null, shouldPoll: boolean) => {
       console.log("content", content);
       console.log("content.status", content.status);
 
-      if (content.status === "complete" && "content_url" in content) {
-        setContentUrl(content.content_url);
+      if (content.status === "complete" && "content_url" in content && content.content_url) {
+        // Use the full storage URL
+        setContentUrl(getFullStorageUrl(content.content_url));
       } else if (content.status === "failed") {
         setError("Content generation failed");
       }
@@ -50,7 +53,7 @@ const useContentPolling = (contentId: string | null, shouldPoll: boolean) => {
     // Set up polling interval
     const interval = setInterval(() => {
       pollContent();
-    }, 2000); // Poll every second
+    }, 2000);
 
     // Cleanup
     return () => clearInterval(interval);
@@ -188,7 +191,7 @@ const ContemplationModal = ({ isOpen, onClose, conversationId, messageId, existi
   const handleViewCard = (contentGeneration: ContentGeneration) => {
     if (contentGeneration.status === 'complete' && contentGeneration.content_url) {
       setFullScreen(true);
-      setCurrentContentUrl(contentGeneration.content_url);
+      setCurrentContentUrl(getFullStorageUrl(contentGeneration.content_url));
     }
   };
 
@@ -203,9 +206,12 @@ const ContemplationModal = ({ isOpen, onClose, conversationId, messageId, existi
   };
 
   // Filter for completed contemplation cards
-  const completedCards = existingContentGenerations.filter(cg =>
-    cg.content_type === 'image' && cg.status === 'complete' && cg.content_url
-  );
+  const completedCards = existingContentGenerations
+    .filter(cg => cg.content_type === 'image' && cg.status === 'complete' && cg.content_url)
+    .map(card => ({
+      ...card,
+      fullUrl: getFullStorageUrl(card.content_url)
+    }));
 
   const modalContent = fullScreen && displayUrl ? (
     // Full screen view within the modal
@@ -235,7 +241,7 @@ const ContemplationModal = ({ isOpen, onClose, conversationId, messageId, existi
       <img
         src={displayUrl}
         alt="Contemplation Card"
-        className="max-w-full max-h-full object-contain rounded-xl shadow-2xl animate-in zoom-in-95 duration-700"
+        className="max-w-full max-h-full object-contain rounded-lg shadow-2xl animate-in zoom-in-95 duration-700"
       />
     </div>
   ) : (
@@ -261,13 +267,16 @@ const ContemplationModal = ({ isOpen, onClose, conversationId, messageId, existi
                   onClick={() => handleViewCard(card)}
                 >
                   <img
-                    src={card.content_url}
+                    src={card.fullUrl}
                     alt="Contemplation Card"
                     className="w-full h-full object-cover group-hover:scale-110 transition-transform duration-300"
                   />
                   <div className="absolute inset-0 bg-black bg-opacity-0 group-hover:bg-opacity-30 transition-all duration-300 flex items-center justify-center">
                     <Eye className="w-8 h-8 text-white opacity-0 group-hover:opacity-100 transition-opacity duration-300" />
                   </div>
+                </div>
+                <div className="mt-2 text-xs text-gray-500 text-center">
+                  {formatDate(card.created_at)}
                 </div>
               </div>
             ))}

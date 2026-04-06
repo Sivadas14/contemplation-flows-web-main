@@ -14,11 +14,10 @@ from src.db import (
     Conversation,
 )
 from src.content.image import _generate_image, CONTEMPLATION_PROMPTS
-from src.settings import get_supabase_client, get_llm
-from src.db import get_db_session, get_background_session
 from src.content.audio import (
     collect_source_content_optimized,  # ✅ Changed to optimized version
     generate_meditation_transcript,
+    generate_meditation_transcript_optimized, # Import optimized version
     generate_audio_from_transcript,
 )
 from src.content.parallel_video import parallel_generator
@@ -29,10 +28,11 @@ async def generate_video_content(
     content_id: str,
     conversation_id: str,
     message_id: str,
+    length: str = None,  # Add length parameter
 ) -> None:
     """Background task to generate video content and update the database record"""
 
-    spb_client = get_supabase_client()
+    spb_client = get_supabase_admin_client(get_settings())
 
     async with get_background_session() as session:
         try:
@@ -45,6 +45,7 @@ async def generate_video_content(
                 message_id=message_id,
                 spb_client=spb_client,
                 content_id=content_id,
+                length=length, # Pass length to parallel generator
             )
 
             # Update the ContentGeneration record with the results
@@ -55,9 +56,19 @@ async def generate_video_content(
             if content_generation:
                 content_generation.content_path = content_path
                 content_generation.transcript = transcript
+                # Set duration based on audio generation (3 minutes)
+                # Update duration
+                duration = 180  # Default 3 minutes
+                if length:
+                    try:
+                        duration = int(str(length).split()[0]) * 60
+                    except:
+                        pass
+                content_generation.duration_seconds = duration
+                
                 await session.commit()
                 tu.logger.info(
-                    f"Successfully completed video generation for content {content_id}"
+                    f"Successfully completed video generation for content {content_id} (duration: {duration}s)"
                 )
             else:
                 tu.logger.error(f"ContentGeneration record not found for id {content_id}")
@@ -78,17 +89,19 @@ async def generate_video_parallel(
     message_id: str,
     spb_client: Client,
     content_id: str,
+    length: str = None,
 ) -> tuple[str, str]:
     """Generate video content with maximum parallelization and optimization"""
     
     tu.logger.info(f"Starting optimized parallel video generation for {content_id}")
     
     # Use the optimized parallel generator
-    content_path, transcript = await parallel_generator.generate_video_parallel_optimized(
+    content_path, transcript = await parallel_generator.generate_video_parallel(
         session=session,
         conversation_id=conversation_id,
         message_id=message_id,
         content_id=content_id,
+        length=length
     )
     
     tu.logger.info(f"Successfully completed optimized video generation: {content_id}")
@@ -184,7 +197,7 @@ def _create_video_ffmpeg_optimized(
             cmd,
             capture_output=True,
             text=True,
-            timeout=300  # 5 minute timeout
+            timeout=3600  # 60 minute timeout to support long videos
         )
         return result.returncode == 0
     except subprocess.TimeoutExpired:

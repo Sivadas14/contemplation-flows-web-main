@@ -26,11 +26,11 @@ const BaseModal = ({
 
   if (inline) {
     return (
-      <div className="mb-6 p-6 bg-orange-50 rounded-2xl border border-orange-200">
-        <div className="flex justify-between items-center mb-4">
-          <h3 className="text-lg font-medium text-brand-heading">{title}</h3>
+      <div className="mb-2 p-4 bg-orange-50/50 rounded-2xl border border-orange-200">
+        <div className="flex justify-between items-center mb-2">
+          <h3 className="text-sm font-medium text-brand-heading">{title}</h3>
           {showCloseButton && (
-            <Button onClick={onClose} variant="ghost" size="sm" className="rounded-full">
+            <Button onClick={onClose} variant="ghost" size="sm" className="h-6 w-6 p-0 rounded-full hover:bg-orange-100">
               <X className="w-4 h-4" />
             </Button>
           )}

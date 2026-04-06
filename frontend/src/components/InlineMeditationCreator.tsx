@@ -1,10 +1,11 @@
-
 import { useState, useEffect, useCallback } from "react";
 import { Button } from "@/components/ui/button";
 import { Download, Volume2, Video, Eye } from "lucide-react";
 import BaseModal from "./BaseModal";
 import { contentAPI } from "@/apis/api";
+import { getFullStorageUrl } from "@/lib/storage";
 import type { ContentGeneration } from "@/apis/wire";
+import { useUsage } from "@/contexts/UsageContext";
 
 interface InlineMeditationCreatorProps {
   isOpen: boolean;
@@ -12,6 +13,11 @@ interface InlineMeditationCreatorProps {
   conversationId?: string;
   messageId?: string;
   existingContentGenerations?: ContentGeneration[];
+  initialContent?: {
+    url: string;
+    type: 'audio' | 'video';
+  } | null;
+  onGenerate?: (options: { mode: 'audio' | 'video', length: string }) => void;
 }
 
 // Custom hook for polling content status
@@ -30,7 +36,8 @@ const useContentPolling = (contentId: string | null, shouldPoll: boolean) => {
       console.log("meditation content.status", content.status);
 
       if (content.status === "complete" && content.content_url) {
-        setContentUrl(content.content_url);
+        // Use the full storage URL
+        setContentUrl(getFullStorageUrl(content.content_url));
       } else if (content.status === "failed") {
         setError("Meditation guide generation failed");
       }
@@ -49,7 +56,7 @@ const useContentPolling = (contentId: string | null, shouldPoll: boolean) => {
     // Set up polling interval
     const interval = setInterval(() => {
       pollContent();
-    }, 2000); // Poll every 2 seconds
+    }, 2000);
 
     // Cleanup
     return () => clearInterval(interval);
@@ -70,9 +77,11 @@ const InlineMeditationCreator = ({
   onClose,
   conversationId,
   messageId,
-  existingContentGenerations = []
+  existingContentGenerations = [],
+  initialContent,
+  onGenerate
 }: InlineMeditationCreatorProps) => {
-  const [selectedLength, setSelectedLength] = useState("10 min");
+  const [selectedLength, setSelectedLength] = useState("5 min");
   const [selectedFormat, setSelectedFormat] = useState("Audio");
   const [fullScreen, setFullScreen] = useState(false);
   const [contentId, setContentId] = useState<string | null>(null);
@@ -81,8 +90,49 @@ const InlineMeditationCreator = ({
   const [currentContentUrl, setCurrentContentUrl] = useState<string | null>(null);
   const [currentContentType, setCurrentContentType] = useState<'audio' | 'video' | null>(null);
 
+  // const lengths = ["5 min", "10 min", "15 min", "20 min"];
+  const { usage } = useUsage();
+
   const lengths = ["5 min", "10 min", "15 min", "20 min"];
+
+  // Standard formats
   const formats = ["Audio", "Video"];
+
+  // Helper to check if format is enabled
+  const isFormatEnabled = (format: string) => {
+    if (!usage) return true; // Default to enabled if loading
+    if (format === "Audio") return usage.audio_enabled;
+    if (format === "Video") return usage.video_enabled;
+    return true;
+  };
+
+  // Helper to check if length is allowed
+  const isLengthEnabled = (lengthStr: string) => {
+    if (!usage) return true;
+    const minutes = parseInt(lengthStr);
+    if (isNaN(minutes)) return true;
+    const totalRemaining = usage.meditation_duration.remaining + (usage.addon_minutes?.remaining || 0);
+    return minutes <= totalRemaining;
+  };
+
+  // Auto-select valid format if current selection is disabled
+  useEffect(() => {
+    if (selectedFormat === "Video" && usage && !usage.video_enabled) {
+      setSelectedFormat("Audio");
+    }
+    // If audio is also disabled, we might have a problem, but usually audio is base
+  }, [usage, selectedFormat]);
+
+  // Auto-select valid length if current selection is disabled
+  useEffect(() => {
+    if (!isLengthEnabled(selectedLength)) {
+      // Find first enabled length
+      const validLength = lengths.find(l => isLengthEnabled(l));
+      if (validLength) {
+        setSelectedLength(validLength);
+      }
+    }
+  }, [usage, selectedLength]);
 
   // Use polling hook - stop polling when in fullscreen
   const shouldPoll = !!(contentId && !fullScreen);
@@ -99,8 +149,13 @@ const InlineMeditationCreator = ({
       setError(null);
       setSelectedLength("10 min");
       setSelectedFormat("Audio");
+    } else if (initialContent) {
+      // If initialContent is provided, go straight to full screen
+      setFullScreen(true);
+      setCurrentContentUrl(initialContent.url);
+      setCurrentContentType(initialContent.type);
     }
-  }, [isOpen]);
+  }, [isOpen, initialContent]);
 
   // Handle when content is complete
   useEffect(() => {
@@ -123,6 +178,16 @@ const InlineMeditationCreator = ({
       return;
     }
 
+    if (onGenerate) {
+      onGenerate({
+        mode: selectedFormat.toLowerCase() as 'audio' | 'video',
+        length: selectedLength
+      });
+      onClose();
+      return;
+    }
+
+    // Fallback to internal generation if no callback provided (legacy behavior)
     setIsInitiating(true);
     setError(null);
 
@@ -131,7 +196,8 @@ const InlineMeditationCreator = ({
       const response = await contentAPI.createContent({
         conversation_id: conversationId,
         message_id: messageId,
-        mode: selectedFormat.toLowerCase() as 'audio' | 'video'
+        mode: selectedFormat.toLowerCase() as 'audio' | 'video',
+        length: selectedLength, // Pass the selected length (e.g., "5 min")
       });
 
       setContentId(response.id);
@@ -167,7 +233,7 @@ const InlineMeditationCreator = ({
   const handleViewGuide = (guide: ContentGeneration) => {
     if (guide.status === 'complete' && guide.content_url) {
       setFullScreen(true);
-      setCurrentContentUrl(guide.content_url);
+      setCurrentContentUrl(getFullStorageUrl(guide.content_url));
       setCurrentContentType(guide.content_type as 'audio' | 'video');
     }
   };
@@ -204,10 +270,14 @@ const InlineMeditationCreator = ({
             </Button>
             <Button
               onClick={() => {
-                setFullScreen(false);
-                setCurrentContentUrl(null);
-                setCurrentContentType(null);
-                setError(null);
+                if (initialContent) {
+                  onClose();
+                } else {
+                  setFullScreen(false);
+                  setCurrentContentUrl(null);
+                  setCurrentContentType(null);
+                  setError(null);
+                }
               }}
               variant="ghost"
               size="sm"
@@ -229,7 +299,7 @@ const InlineMeditationCreator = ({
           ) : (
             <div className="max-w-2xl w-full bg-gradient-to-br from-blue-400 to-purple-600 rounded-lg shadow-2xl p-8">
               <div className="text-white text-center">
-                <div className="text-6xl mb-6">🧘‍♀️</div>
+                {/* <div className="text-6xl mb-6">🧘‍♀️</div> */}
                 <p className="text-2xl mb-6">Guided Meditation</p>
                 <audio
                   src={displayUrl}
@@ -257,7 +327,7 @@ const InlineMeditationCreator = ({
     };
 
     return (
-      <div className="flex flex-col items-center justify-center py-12">
+      <div className="flex flex-col items-center justify-center py-12 ">
         <div className="relative">
           {/* Outer rotating circle */}
           <div className="w-16 h-16 border-4 border-orange-200 rounded-full animate-spin border-t-brand-button"></div>
@@ -273,106 +343,112 @@ const InlineMeditationCreator = ({
   };
 
   // Filter for completed meditation guides (audio and video)
-  const completedGuides = existingContentGenerations.filter(guide =>
-    (guide.content_type === 'audio' || guide.content_type === 'video') &&
-    guide.status === 'complete' &&
-    guide.content_url
-  );
+  const completedGuides = existingContentGenerations
+    .filter(guide =>
+      (guide.content_type === 'audio' || guide.content_type === 'video') &&
+      guide.status === 'complete' &&
+      guide.content_url
+    )
+    .map(guide => ({
+      ...guide,
+      fullUrl: getFullStorageUrl(guide.content_url)
+    }));
 
   const modalContent = (
     <div>
       {displayError ? (
-        <div className="mb-4 p-4 bg-red-50 border border-red-200 rounded-lg">
-          <p className="text-red-600">{displayError}</p>
+        <div className="bg-red-50 border border-red-200 text-red-700 px-4 py-3 rounded-lg mb-6 flex items-center gap-2">
+          <div className="w-2 h-2 rounded-full bg-red-500"></div>
+          {displayError}
         </div>
       ) : null}
 
-      {/* Existing Meditation Guides */}
-      {completedGuides.length > 0 && (
+      {/* Existing Guides Thumbnails */}
+      {/* {!isLoading && completedGuides.length > 0 && !initialContent && (
         <div className="mb-8">
-          <div className="grid grid-cols-2 sm:grid-cols-3 gap-4">
+          <p className="text-brand-body mb-4 font-medium">Your Generated Guides</p>
+          <div className="grid grid-cols-2 gap-4">
             {completedGuides.map((guide) => (
-              <div key={guide.id} className="group relative">
-                <div
-                  className="aspect-square rounded-lg overflow-hidden border-2 border-orange-200 cursor-pointer hover:border-brand-button transition-colors bg-gradient-to-br from-blue-50 to-purple-50 flex items-center justify-center"
-                  onClick={() => handleViewGuide(guide)}
-                >
-                  <div className="text-center">
-                    {guide.content_type === "audio" ? (
-                      <Volume2 className="w-12 h-12 text-brand-button mb-2 mx-auto" />
-                    ) : (
-                      <Video className="w-12 h-12 text-brand-button mb-2 mx-auto" />
-                    )}
-                    <p className="text-sm font-medium text-brand-button capitalize">{guide.content_type}</p>
-                    <p className="text-xs text-brand-body">Meditation</p>
-                  </div>
-                  <div className="absolute inset-0 bg-black bg-opacity-0 group-hover:bg-opacity-20 transition-opacity duration-200 flex items-center justify-center">
-                    <Eye className="w-6 h-6 text-white opacity-0 group-hover:opacity-100 transition-opacity duration-200" />
+              <div
+                key={guide.id}
+                className="relative group cursor-pointer border border-orange-100 rounded-lg overflow-hidden hover:shadow-md transition-shadow"
+                onClick={() => handleViewGuide(guide)}
+              >
+                <div className={`h-24 flex items-center justify-center ${guide.content_type === 'video' ? 'bg-purple-50' : 'bg-blue-50'
+                  }`}>
+                  {guide.content_type === 'video' ? (
+                    <Video className="w-8 h-8 text-purple-400" />
+                  ) : (
+                    <Volume2 className="w-8 h-8 text-blue-400" />
+                  )}
+                </div>
+                <div className="p-3 bg-white">
+                  <div className="flex items-center justify-between">
+                    <span className="text-xs text-gray-500">{formatDate(guide.created_at)}</span>
+                    <span className="text-xs font-medium px-2 py-0.5 rounded-full bg-gray-100 uppercase">
+                      {guide.content_type}
+                    </span>
                   </div>
                 </div>
-                <div className="mt-2 flex items-center justify-between">
-                  <p className="text-xs text-brand-body truncate">
-                    {formatDate(guide.created_at)}
-                  </p>
-                  <Button
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      handleDownload(guide.content_url);
-                    }}
-                    variant="ghost"
-                    size="sm"
-                    className="h-6 w-6 p-0 text-brand-button hover:text-brand-button/80"
-                  >
-                    <Download className="w-3 h-3" />
-                  </Button>
+                <div className="absolute inset-0 bg-black/0 group-hover:bg-black/5 transition-colors flex items-center justify-center opacity-0 group-hover:opacity-100">
+                  <Eye className="w-8 h-8 text-gray-700 drop-shadow-sm" />
                 </div>
               </div>
             ))}
           </div>
         </div>
-      )}
+      )} */}
 
       {/* Loading Animation - Show below thumbnails when generating */}
       {isLoading && <LoadingAnimation />}
 
       {/* Generate New Guide Section - Only show when not loading */}
-      {!isLoading && (
+      {!isLoading && !initialContent && (
         <div>
           <div className="mb-6">
             <p className="text-brand-body mb-4">Choose the length of guidance</p>
             <div className="grid grid-cols-2 gap-3">
-              {lengths.map((length) => (
-                <Button
-                  key={length}
-                  onClick={() => setSelectedLength(length)}
-                  variant={selectedLength === length ? "default" : "outline"}
-                  className={`rounded-full ${selectedLength === length
-                    ? "bg-brand-button hover:bg-brand-button/90 text-white"
-                    : "border-orange-200 hover:border-brand-button"
-                    }`}
-                >
-                  {length}
-                </Button>
-              ))}
+              {lengths.map((length) => {
+                const enabled = isLengthEnabled(length);
+                return (
+                  <Button
+                    key={length}
+                    onClick={() => enabled && setSelectedLength(length)}
+                    disabled={!enabled}
+                    variant={selectedLength === length ? "default" : "outline"}
+                    className={`rounded-full ${selectedLength === length
+                      ? "bg-brand-button hover:bg-brand-button/90 text-white"
+                      : "border-orange-200 hover:border-brand-button"
+                      } ${!enabled ? "opacity-50 cursor-not-allowed hover:bg-transparent hover:text-gray-500 hover:border-gray-200" : ""}`}
+                  >
+                    {length}
+                  </Button>
+                );
+              })}
             </div>
           </div>
 
           <div className="mb-6">
             <p className="text-brand-body mb-4">Choose the format that you want</p>
-            <div className="grid grid-cols-2 gap-3">
-              {formats.map((format) => (
-                <Button
-                  key={format}
-                  onClick={() => setSelectedFormat(format)}
-                  variant={selectedFormat === format ? "default" : "outline"}
-                  className={`rounded-full ${selectedFormat === format
-                    ? "bg-brand-button hover:bg-brand-button/90 text-white"
-                    : "border-orange-200 hover:border-brand-button"
-                    }`}
-                >
-                  {format}
-                </Button>
-              ))}
+            <div className="grid grid-cols-2 items-center gap-3">
+              {formats.map((format) => {
+                const enabled = isFormatEnabled(format);
+                if (!enabled) return null;
+                return (
+                  <Button
+                    key={format}
+                    onClick={() => enabled && setSelectedFormat(format)}
+                    disabled={!enabled}
+                    variant={selectedFormat === format ? "default" : "outline"}
+                    className={`rounded-full ${selectedFormat === format
+                      ? "bg-brand-button hover:bg-brand-button/90 text-white"
+                      : "border-orange-200 hover:border-brand-button"
+                      } ${!enabled ? "opacity-50 cursor-not-allowed hover:bg-transparent hover:text-gray-500 hover:border-gray-200" : ""}`}
+                  >
+                    {format} {!enabled && "(Upgrade Plan)"}
+                  </Button>
+                );
+              })}
             </div>
           </div>
 
@@ -402,17 +478,18 @@ const InlineMeditationCreator = ({
     </div>
   );
 
+  if (fullScreen) {
+    return <FullScreenView />;
+  }
+
   return (
-    <>
-      <BaseModal
-        isOpen={isOpen}
-        onClose={onClose}
-        title="Create Meditation Guide"
-      >
-        {modalContent}
-      </BaseModal>
-      <FullScreenView />
-    </>
+    <BaseModal
+      isOpen={isOpen}
+      onClose={onClose}
+      title="Create Meditation Guide"
+    >
+      {modalContent}
+    </BaseModal>
   );
 };
 

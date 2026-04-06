@@ -10,8 +10,10 @@ from fire import Fire
 
 from src.settings import get_llm
 from src.chunking import extract_pdf_text, extract_docx_text
-from src.db import get_db_session, SourceDocument, DocumentChunk, DocumentStatus
-from src.settings import get_supabase_client
+from src.db import get_background_session, SourceDocument, DocumentChunk, DocumentStatus
+from src.settings import get_supabase_client,get_settings
+
+
 
 
 async def _main(fp: str):
@@ -50,7 +52,7 @@ async def _main(fp: str):
 
     # upload to supabase
     tu.logger.info(f"Uploading to supabase: {filename}")
-    client = get_supabase_client()
+    client = get_supabase_client(get_settings())
     resp = client.storage.from_("source-files").upload(
         path=filename,
         file=content,
@@ -64,51 +66,51 @@ async def _main(fp: str):
 
     # Save to database
     tu.logger.info(f"Saving to database: {filename}")
-    session = get_db_session(sync=False)
-    try:
-        # Create source document
-        source_doc = SourceDocument(
-            filename=resp.path,
-            file_size_bytes=file_size,
-            status=DocumentStatus.PROCESSING,
-            active=True,
-            # Remove user_id since documents are now shared
-        )
-        session.add(source_doc)
-        await session.flush()  # To get the ID
-        await session.refresh(source_doc)
-
-        # Create chunks
-        chunk_records = []
-        for i, (chunk, embedding) in enumerate(zip(chunks, embeddings)):
-            chunk_record = DocumentChunk(
-                source_document_id=source_doc.id,
-                content=chunk.content,
-                embedding=embedding,
-                location=chunk.loc,
-                model_used=model.model_id,
+    async with get_background_session() as session:
+        try:
+            # Create source document
+            source_doc = SourceDocument(
+                filename=resp.path,
+                file_size_bytes=file_size,
+                status=DocumentStatus.PROCESSING,
+                active=True,
+                # Remove user_id since documents are now shared
             )
-            chunk_records.append(chunk_record)
-            session.add(chunk_record)
+            session.add(source_doc)
+            await session.flush()  # To get the ID
+            await session.refresh(source_doc)
 
-        # Update source document status to completed
-        source_doc.status = DocumentStatus.COMPLETED
+            # Create chunks
+            chunk_records = []
+            for i, (chunk, embedding) in enumerate(zip(chunks, embeddings)):
+                chunk_record = DocumentChunk(
+                    source_document_id=source_doc.id,
+                    content=chunk.content,
+                    embedding=embedding,
+                    location=chunk.loc,
+                    model_used=model.model_id,
+                )
+                chunk_records.append(chunk_record)
+                session.add(chunk_record)
 
-        await session.commit()
+            # Update source document status to completed
+            source_doc.status = DocumentStatus.COMPLETED
+
+            await session.commit()
+            tu.logger.info(
+                f"Successfully saved document '{filename}' with {len(chunk_records)} chunks to database"
+            )
+            tu.logger.info(f"Source document ID: {source_doc.id}")
+
+        except Exception as e:
+            await session.rollback()
+            tu.logger.info(f"Error saving to database: {e}")
+            raise
+        finally:
+            await session.close()
         tu.logger.info(
-            f"Successfully saved document '{filename}' with {len(chunk_records)} chunks to database"
+            f"Successfully loaded document '{filename}' with {len(chunk_records)} chunks to database"
         )
-        tu.logger.info(f"Source document ID: {source_doc.id}")
-
-    except Exception as e:
-        await session.rollback()
-        tu.logger.info(f"Error saving to database: {e}")
-        raise
-    finally:
-        await session.close()
-    tu.logger.info(
-        f"Successfully loaded document '{filename}' with {len(chunk_records)} chunks to database"
-    )
 
 
 async def main(fp: str):

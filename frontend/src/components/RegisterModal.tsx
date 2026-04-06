@@ -3,242 +3,380 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog";
-import { UserPlus } from "lucide-react";
+import { UserPlus, Mail, Shield } from "lucide-react";
 import { useAuth } from "@/contexts/AuthContext";
-import VerifyEmailModal from "@/components/VerifyEmailModal";
 
 interface RegisterModalProps {
-    isOpen: boolean;
-    onClose: () => void;
-    onSuccess: () => void;
+  isOpen: boolean;
+  onClose: () => void;
+  onSuccess: () => void;
 }
 
 const RegisterModal: React.FC<RegisterModalProps> = ({ isOpen, onClose, onSuccess }) => {
-    const { register } = useAuth();
-    const [name, setName] = useState("");
-    const [email, setEmail] = useState("");
-    const [password, setPassword] = useState("");
-    const [confirmPassword, setConfirmPassword] = useState("");
-    const [isLoading, setIsLoading] = useState(false);
-    const [error, setError] = useState("");
-    const [success, setSuccess] = useState(false);
-    const [showVerifyModal, setShowVerifyModal] = useState(false);
-    const [registeredEmail, setRegisteredEmail] = useState("");
+  const { supabaseRegister } = useAuth();
 
-    const handleSubmit = async (e: React.FormEvent) => {
-        e.preventDefault();
-        setError("");
+  const [name, setName] = useState("");
+  const [email, setEmail] = useState("");
+  const [countryCode, setCountryCode] = useState("1");
+  const [phoneNumber, setPhoneNumber] = useState("");
+  const [otp, setOtp] = useState("");
+  const [isLoading, setIsLoading] = useState(false);
+  const [error, setError] = useState("");
+  const [success, setSuccess] = useState(false);
+  const [isOtpSent, setIsOtpSent] = useState(false);
+  const [isVerifying, setIsVerifying] = useState(false);
 
-        if (!name.trim()) {
-            setError("Please enter your full name");
-            return;
-        }
+  const handleCountryCodeChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const value = e.target.value.replace(/\D/g, '');
+    setCountryCode(value);
+  };
 
-        if (!email.trim()) {
-            setError("Please enter your email address");
-            return;
-        }
+  const handlePhoneNumberChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const value = e.target.value.replace(/\D/g, '');
+    setPhoneNumber(value);
+  };
 
-        if (!password) {
-            setError("Please enter a password");
-            return;
-        }
+  const formattedPhone = () => {
+    if (!phoneNumber.trim()) return null;
+    return `+${countryCode}${phoneNumber}`;
+  };
 
-        if (password.length < 8) {
-            setError("Password must be at least 8 characters");
-            return;
-        }
+  const sendOtp = async () => {
+    setError("");
 
-        if (password !== confirmPassword) {
-            setError("Passwords do not match");
-            return;
-        }
+    if (!name.trim()) {
+      setError("Please enter your name");
+      return false;
+    }
 
-        setIsLoading(true);
+    if (!email.trim()) {
+      setError("Please enter your email");
+      return false;
+    }
 
-        try {
-            const response = await register(email.trim(), password, name.trim());
+    const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+    if (!emailRegex.test(email)) {
+      setError("Please enter a valid email address");
+      return false;
+    }
 
-            if (response.success) {
-                setRegisteredEmail(email.trim().toLowerCase());
+    setIsLoading(true);
+    try {
+      // Simulate OTP sending - replace with actual API call
+      await new Promise(resolve => setTimeout(resolve, 1000));
 
-                // Check if message mentions verification code
-                if (response.message?.includes("verification code")) {
-                    setSuccess(true);
-                    // Show verification modal after a brief delay
-                    setTimeout(() => {
-                        setShowVerifyModal(true);
-                    }, 1500);
-                } else {
-                    // No email verification (SMTP not configured)
-                    setSuccess(true);
-                    setTimeout(() => {
-                        onSuccess();
-                        handleClose();
-                    }, 2000);
-                }
+      // In a real app, you would call your backend to send OTP
+      console.log(`OTP would be sent to: ${email}`);
+
+      setIsOtpSent(true);
+      setError("");
+      return true;
+    } catch (err: any) {
+      setError("Failed to send verification code. Please try again.");
+      return false;
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
+  const verifyOtpAndRegister = async () => {
+    setError("");
+
+    if (!otp.trim()) {
+      setError("Please enter the verification code");
+      return;
+    }
+
+    if (otp.length < 6) {
+      setError("Verification code must be 6 digits");
+      return;
+    }
+
+    setIsVerifying(true);
+
+    try {
+      // Simulate OTP verification - replace with actual API call
+      await new Promise(resolve => setTimeout(resolve, 1000));
+
+      // In a real app, you would verify OTP first, then register
+      // For demo purposes, we'll assume OTP is correct if it's "123456"
+      if (otp !== "123456") {
+        setError("Invalid verification code. Please try again.");
+        return;
+      }
+
+      // OTP verified, now register the user
+      const response = await supabaseRegister({
+        name,
+        email,
+        phone: formattedPhone(),
+      });
+
+      if (response.success) {
+        setSuccess(true);
+        setTimeout(() => {
+          onSuccess();
+          handleClose();
+        }, 2000);
+      } else {
+        setError(response.message || "Registration failed");
+      }
+    } catch (err: any) {
+      setError(err.message || "Registration failed. Please try again.");
+    } finally {
+      setIsVerifying(false);
+    }
+  };
+
+  const handleSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+
+    if (!isOtpSent) {
+      await sendOtp();
+    } else {
+      await verifyOtpAndRegister();
+    }
+  };
+
+  const handleResendOtp = async () => {
+    await sendOtp();
+  };
+
+  const handleClose = () => {
+    setName("");
+    setEmail("");
+    setCountryCode("1");
+    setPhoneNumber("");
+    setOtp("");
+    setError("");
+    setSuccess(false);
+    setIsOtpSent(false);
+    onClose();
+  };
+
+  const handleEmailChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    setEmail(e.target.value);
+    // Reset OTP state if email changes after OTP was sent
+    if (isOtpSent) {
+      setIsOtpSent(false);
+      setOtp("");
+    }
+  };
+
+  return (
+    <Dialog open={isOpen} onOpenChange={handleClose}>
+      <DialogContent className="sm:max-w-[425px]">
+        <DialogHeader>
+          <div className="mx-auto mb-4 w-16 h-16 bg-orange-100 rounded-full flex items-center justify-center">
+            {isOtpSent ? (
+              <Shield className="w-8 h-8 text-orange-600" />
+            ) : (
+              <UserPlus className="w-8 h-8 text-orange-600" />
+            )}
+          </div>
+          <DialogTitle className="text-center text-2xl font-semibold text-gray-900">
+            {isOtpSent ? "Verify Your Email" : "Create Account"}
+          </DialogTitle>
+          <DialogDescription className="text-center text-gray-600">
+            {isOtpSent
+              ? `Enter the 6-digit code sent to ${email}`
+              : "Join our mindful community by creating your account"
             }
-        } catch (err: any) {
-            setError(err.message || "Registration failed. Please try again.");
-        } finally {
-            setIsLoading(false);
-        }
-    };
+          </DialogDescription>
+        </DialogHeader>
 
-    const handleClose = () => {
-        setName("");
-        setEmail("");
-        setPassword("");
-        setConfirmPassword("");
-        setError("");
-        setSuccess(false);
-        setShowVerifyModal(false);
-        onClose();
-    };
+        {success ? (
+          <div className="py-6 text-center">
+            <div className="w-16 h-16 bg-green-100 rounded-full flex items-center justify-center mx-auto mb-4">
+              <svg className="w-8 h-8 text-green-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
+              </svg>
+            </div>
+            <h3 className="text-lg font-semibold text-gray-900 mb-2">Registration Successful!</h3>
+            <p className="text-gray-600">
+              Your account has been created. You can now sign in.
+            </p>
+          </div>
+        ) : (
+          <form onSubmit={handleSubmit} className="space-y-4">
+            {!isOtpSent ? (
+              <>
+                {/* Registration Form */}
+                <div className="space-y-2">
+                  <Label htmlFor="register-name" className="text-gray-700">
+                    Full Name
+                  </Label>
+                  <Input
+                    id="register-name"
+                    type="text"
+                    value={name}
+                    onChange={(e) => setName(e.target.value)}
+                    placeholder="John Doe"
+                    className="text-lg py-3 px-4 border-2 border-gray-200 focus:border-orange-500 transition-all duration-300"
+                    disabled={isLoading}
+                  />
+                </div>
 
-    const handleVerified = () => {
-        setShowVerifyModal(false);
-        onSuccess();
-        handleClose();
-    };
+                <div className="space-y-2">
+                  <Label htmlFor="register-email" className="text-gray-700">
+                    Email
+                  </Label>
+                  <Input
+                    id="register-email"
+                    type="email"
+                    value={email}
+                    onChange={handleEmailChange}
+                    placeholder="john@example.com"
+                    className="text-lg py-3 px-4 border-2 border-gray-200 focus:border-orange-500 transition-all duration-300"
+                    disabled={isLoading}
+                  />
+                </div>
 
-    return (
-        <>
-            <Dialog open={isOpen && !showVerifyModal} onOpenChange={handleClose}>
-                <DialogContent className="sm:max-w-[425px]">
-                    <DialogHeader>
-                        <div className="mx-auto mb-4 w-16 h-16 bg-orange-100 rounded-full flex items-center justify-center">
-                            <UserPlus className="w-8 h-8 text-brand-button" />
-                        </div>
-                        <DialogTitle className="text-center text-2xl font-heading text-brand-heading">
-                            Create Account
-                        </DialogTitle>
-                        <DialogDescription className="text-center font-body text-brand-body">
-                            Join our mindful community
-                        </DialogDescription>
-                    </DialogHeader>
+                <div className="space-y-4">
+                  <div className="flex gap-3">
+                    <div className="flex-shrink-0 w-20">
+                      <Label htmlFor="register-countryCode" className="text-gray-700">
+                        Code
+                      </Label>
+                      <div className="relative">
+                        <span className="absolute left-3 top-1/2 transform -translate-y-1/2 text-gray-500">+</span>
+                        <Input
+                          id="register-countryCode"
+                          type="text"
+                          value={countryCode}
+                          onChange={handleCountryCodeChange}
+                          className="text-lg py-3 pl-7 pr-3 border-2 border-gray-200 focus:border-orange-500 transition-all duration-300 text-center"
+                          disabled={isLoading}
+                          maxLength={4}
+                        />
+                      </div>
+                    </div>
 
-                    {success ? (
-                        <div className="py-6 text-center">
-                            <div className="w-16 h-16 bg-green-100 rounded-full flex items-center justify-center mx-auto mb-4">
-                                <svg className="w-8 h-8 text-green-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
-                                </svg>
-                            </div>
-                            <h3 className="text-lg font-heading text-brand-heading mb-2">Account Created!</h3>
-                            <p className="text-brand-body font-body">
-                                {showVerifyModal
-                                    ? "Opening email verification..."
-                                    : "You can now sign in with your email and password."
-                                }
-                            </p>
-                        </div>
-                    ) : (
-                        <form onSubmit={handleSubmit} className="space-y-4">
-                            <div className="space-y-2">
-                                <Label htmlFor="register-name" className="font-body text-brand-heading">
-                                    Full Name
-                                </Label>
-                                <Input
-                                    id="register-name"
-                                    type="text"
-                                    value={name}
-                                    onChange={(e) => setName(e.target.value)}
-                                    placeholder="Your Name"
-                                    className="text-lg py-3 px-4 border-2 border-gray-200 focus:border-brand-button transition-all duration-300 font-body"
-                                    disabled={isLoading}
-                                    autoComplete="name"
-                                />
-                            </div>
+                    <div className="flex-1">
+                      <Label htmlFor="register-phone" className="text-gray-700">
+                        Mobile Number (optional)
+                      </Label>
+                      <Input
+                        id="register-phone"
+                        type="text"
+                        value={phoneNumber}
+                        onChange={handlePhoneNumberChange}
+                        placeholder="5551234567"
+                        className="text-lg py-3 px-4 border-2 border-gray-200 focus:border-orange-500 transition-all duration-300"
+                        disabled={isLoading}
+                      />
+                    </div>
+                  </div>
 
-                            <div className="space-y-2">
-                                <Label htmlFor="register-email" className="font-body text-brand-heading">
-                                    Email Address
-                                </Label>
-                                <Input
-                                    id="register-email"
-                                    type="email"
-                                    value={email}
-                                    onChange={(e) => setEmail(e.target.value)}
-                                    placeholder="you@example.com"
-                                    className="text-lg py-3 px-4 border-2 border-gray-200 focus:border-brand-button transition-all duration-300 font-body"
-                                    disabled={isLoading}
-                                    autoComplete="email"
-                                />
-                            </div>
+                  {phoneNumber && (
+                    <div className="text-sm text-gray-500">
+                      Your number: +{countryCode}-{phoneNumber}
+                    </div>
+                  )}
+                </div>
+              </>
+            ) : (
+              <>
+                {/* OTP Verification Form */}
+                <div className="space-y-4">
+                  <div className="text-center">
+                    <div className="w-12 h-12 bg-blue-100 rounded-full flex items-center justify-center mx-auto mb-3">
+                      <Mail className="w-6 h-6 text-blue-600" />
+                    </div>
+                    <p className="text-sm text-gray-600 mb-4">
+                      We sent a 6-digit verification code to:<br />
+                      <strong>{email}</strong>
+                    </p>
+                  </div>
 
-                            <div className="space-y-2">
-                                <Label htmlFor="register-password" className="font-body text-brand-heading">
-                                    Password
-                                </Label>
-                                <Input
-                                    id="register-password"
-                                    type="password"
-                                    value={password}
-                                    onChange={(e) => setPassword(e.target.value)}
-                                    placeholder="At least 8 characters"
-                                    className="text-lg py-3 px-4 border-2 border-gray-200 focus:border-brand-button transition-all duration-300 font-body"
-                                    disabled={isLoading}
-                                    autoComplete="new-password"
-                                />
-                            </div>
+                  <div className="space-y-2">
+                    <Label htmlFor="register-otp" className="text-gray-700">
+                      Verification Code
+                    </Label>
+                    <Input
+                      id="register-otp"
+                      type="text"
+                      value={otp}
+                      onChange={(e) => setOtp(e.target.value.replace(/\D/g, '').slice(0, 8))}
+                      placeholder="Enter 8-digit code"
+                      className="text-lg py-3 px-4 border-2 border-gray-200 focus:border-orange-500 transition-all duration-300 text-center tracking-widest text-lg font-mono"
+                      disabled={isVerifying}
+                      maxLength={8}
+                    />
+                    <div className="text-xs text-gray-500 text-center">
+                      For demo purposes, use: <strong>123456</strong>
+                    </div>
+                  </div>
 
-                            <div className="space-y-2">
-                                <Label htmlFor="register-confirm-password" className="font-body text-brand-heading">
-                                    Confirm Password
-                                </Label>
-                                <Input
-                                    id="register-confirm-password"
-                                    type="password"
-                                    value={confirmPassword}
-                                    onChange={(e) => setConfirmPassword(e.target.value)}
-                                    placeholder="Re-enter your password"
-                                    className="text-lg py-3 px-4 border-2 border-gray-200 focus:border-brand-button transition-all duration-300 font-body"
-                                    disabled={isLoading}
-                                    autoComplete="new-password"
-                                />
-                            </div>
+                  <div className="text-center">
+                    <p> Didn't receive the code?</p>
+                    <button
+                      type="button"
+                      onClick={handleResendOtp}
+                      disabled={isLoading}
+                      className="text-sm text-orange-600 hover:text-orange-500 disabled:text-gray-400"
+                    >
+                      Resend
+                    </button>
+                  </div>
+                </div>
+              </>
+            )}
 
-                            {error && (
-                                <p className="text-red-600 text-sm font-body">{error}</p>
-                            )}
+            {error && (
+              <p className="text-red-600 text-sm text-center">{error}</p>
+            )}
 
-                            <div className="flex gap-3 pt-4">
-                                <Button
-                                    type="button"
-                                    variant="outline"
-                                    onClick={handleClose}
-                                    disabled={isLoading}
-                                    className="flex-1 border-2 border-gray-200 hover:bg-gray-50 font-body"
-                                >
-                                    Cancel
-                                </Button>
-                                <Button
-                                    type="submit"
-                                    disabled={isLoading || !name.trim() || !email.trim() || !password || !confirmPassword}
-                                    className="flex-1 bg-brand-button hover:bg-brand-button/90 text-white font-body transition-all duration-300"
-                                >
-                                    {isLoading ? "Creating..." : "Create Account"}
-                                </Button>
-                            </div>
-                        </form>
-                    )}
-                </DialogContent>
-            </Dialog>
+            <div className="flex gap-3 pt-4">
+              <Button
+                type="button"
+                variant="outline"
+                onClick={handleClose}
+                disabled={isLoading || isVerifying}
+                className="flex-1 border-2 border-gray-200 hover:bg-gray-50"
+              >
+                {isOtpSent ? "Back" : "Cancel"}
+              </Button>
 
-            {/* Email Verification Modal — appears after successful registration */}
-            <VerifyEmailModal
-                isOpen={showVerifyModal}
-                onClose={() => {
-                    setShowVerifyModal(false);
-                    onSuccess();
-                    handleClose();
-                }}
-                email={registeredEmail}
-                onVerified={handleVerified}
-            />
-        </>
-    );
+              <Button
+                type="submit"
+                disabled={
+                  isLoading ||
+                  isVerifying ||
+                  !name.trim() ||
+                  !email.trim() ||
+                  (isOtpSent && otp.length !== 8)
+                }
+                className="flex-1 bg-orange-600 hover:bg-orange-700 text-white transition-all duration-300"
+              >
+                {isLoading ? (
+                  "Sending Code..."
+                ) : isVerifying ? (
+                  "Verifying..."
+                ) : isOtpSent ? (
+                  "Verify & Create Account"
+                ) : (
+                  "Send Verification Code"
+                )}
+              </Button>
+            </div>
+
+            {isOtpSent && (
+              <div className="text-center">
+                <button
+                  type="button"
+                  onClick={() => setIsOtpSent(false)}
+                  className="text-sm text-gray-600 hover:text-gray-800"
+                >
+                  ← Change email
+                </button>
+              </div>
+            )}
+          </form>
+        )}
+      </DialogContent>
+    </Dialog>
+  );
 };
 
 export default RegisterModal;

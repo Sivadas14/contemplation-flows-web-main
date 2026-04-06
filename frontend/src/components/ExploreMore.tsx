@@ -94,7 +94,7 @@ const ExploreMore = ({ isOpen, onClose, onSelectQuestion, questions: propQuestio
       onClose={onClose}
       title="Here's a few questions that might help you:"
       inline={inline}
-      showCloseButton={!inline}
+      showCloseButton={true}
     >
       {modalContent}
     </BaseModal>

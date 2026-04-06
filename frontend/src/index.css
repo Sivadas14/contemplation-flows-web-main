@@ -1,4 +1,3 @@
-
 @tailwind base;
 @tailwind components;
 @tailwind utilities;
@@ -98,15 +97,33 @@
     @apply border-border;
   }
 
-  body {
-    @apply bg-background text-foreground font-body;
+  html,
+  body,
+  #root {
+    height: 100%;
+    width: 100%;
+    margin: 0;
+    padding: 0;
+    overflow: hidden;
   }
 
-  h1, h2, h3, h4, h5, h6 {
+  body {
+    @apply bg-[#F5F0EC] text-foreground font-body;
+    background-color: #F5F0EC;
+  }
+
+  h1,
+  h2,
+  h3,
+  h4,
+  h5,
+  h6 {
     @apply font-heading text-brand-heading;
   }
 
-  p, span, div {
+  p,
+  span,
+  div {
     @apply text-brand-body;
   }
 }
@@ -114,5 +131,32 @@
 @layer components {
   .btn-brand {
     @apply bg-brand-button text-white hover:bg-brand-button/90 transition-colors;
+  }
+}
+
+/* Custom Branded Scrollbar */
+@layer base {
+  ::-webkit-scrollbar {
+    width: 6px;
+    height: 6px;
+  }
+
+  ::-webkit-scrollbar-track {
+    background: #f5f0ec;
+  }
+
+  ::-webkit-scrollbar-thumb {
+    background: #472b20;
+    border-radius: 10px;
+  }
+
+  ::-webkit-scrollbar-thumb:hover {
+    background: #d05e2d;
+  }
+
+  /* Firefox support */
+  * {
+    scrollbar-width: thin;
+    scrollbar-color: #472b20 #f5f0ec;
   }
 }

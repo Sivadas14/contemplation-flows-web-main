@@ -22,7 +22,7 @@ from src.db import (
     SourceDocument,
     DocumentChunk,
 )
-from src.settings import get_llm, get_supabase_client
+from src.settings import get_llm, get_supabase_client, get_supabase_admin_client, get_settings
 from src.db import get_db_session, get_background_session
 # Import the optimized queries
 from src.db import OptimizedQueries
@@ -31,33 +31,80 @@ from src.utils.profiler import profile_operation, get_profiler, print_profiler_s
 
 # Cache for meditation transcripts
 _transcript_cache = {}
+# Version salt to force cache refresh when logic changes
+_CACHE_VERSION = "v4" 
 
-def _get_cache_key(source_text: str) -> str:
-    """Generate cache key for source text"""
-    return hashlib.md5(source_text.encode()).hexdigest()
+def _get_cache_key(source_text: str, length: str = None) -> str:
+    """Generate cache key for source text and length"""
+    key_content = f"{source_text}_{length}_{_CACHE_VERSION}" if length else f"{source_text}_{_CACHE_VERSION}"
+    return hashlib.md5(key_content.encode()).hexdigest()
+
+def _remove_transcript_artifacts(text: str) -> str:
+    """Remove common transcript artifacts that TTS shouldn't read verbatim"""
+    # Punctuation names
+    text = text.replace('dot dot', '').replace('dot dot dot', '').replace('dots', '')
+    text = text.replace('hyphen', '').replace('dash', '').replace('minus', '')
+    text = text.replace('comma', '').replace('period', '').replace('full stop', '')
+    text = text.replace('exclamation', '').replace('question mark', '')
+    text = text.replace('colon', '').replace('semicolon', '')
+    text = text.replace('quotation', '').replace('quote', '').replace('apostrophe', '')
+    text = text.replace('ellipsis', '').replace('three dots', '')
+    # Transcription markers
+    text = text.replace('end quote', '').replace('begin quote', '')
+    text = text.replace('end parenthesis', '').replace('begin parenthesis', '')
+    text = text.replace('close parenthesis', '').replace('open parenthesis', '')
+    return text
 
 async def generate_meditation_transcript_optimized(source_text: str) -> str:
     """Generate meditation transcript with caching and optimized prompt"""
     
     # Check cache first
-    cache_key = _get_cache_key(source_text)
+    cache_key = _get_cache_key(source_text, length)
     if cache_key in _transcript_cache:
         tu.logger.info("Using cached transcript")
         return _transcript_cache[cache_key]
     
-    model = get_llm("gpt-4o")
+    model = get_llm("gpt-5.1-chat-latest")
     
-    # Optimized prompt - shorter and more focused
+    # Parse length to approximate word count
+    target_words = "400-500"
+    target_duration = "3-minute"
+    
+    if length:
+        tu.logger.info(f"Processing requested length: {length}")
+        # Simple mapping from "X min" to word count
+        try:
+            minutes = int(str(length).split()[0])
+            target_duration = f"{minutes}-minute"
+            # Apply a multiplier to force the LLM to expand more
+            # Asking for ~200 words per minute to actually get ~130-150
+            target_words = f"{minutes * 200}-{minutes * 220}"
+            tu.logger.info(f"Calculated target: {target_duration}, words: {target_words} (with multiplier)")
+        except Exception as e:
+            tu.logger.error(f"Error parsing length '{length}': {e}")
+            pass
+            
+    # Optimized prompt - structured for expansion with few-shot example
     transcript_prompt = dedent(
         f"""
-        Create a 3-minute meditation script (400-500 words) from this spiritual text:
-        {source_text[:2000]}  # Limit input size
+        Create a {target_duration} meditation script ({target_words} words) based on this spiritual text:
+        {source_text[:20000]}
         
-        Requirements:
-        - Calm, soothing tone
-        - Include [pause] and [breathing] tags
-        - Focus on mindfulness and inner peace
-        - Natural flow for audio narration
+        ### EXAMPLE OF EXPANSION TECHNIQUE (HOW TO REACH {target_words} WORDS):
+        Source Sentence: "Focus on your breath and find peace."
+        Expanded Sequence: "Now, gently shift your entire awareness to the rhythm of your breath. [pause] Feel the cool air as it touches the tip of your nose, entering slowly, filling your lungs with a soft, golden light. [breathing] Notice how your chest rises, like a gentle wave on a calm ocean, and how it falls, releasing any weight you've been carrying. With every inhale, you are breathing in pure, mountain air. With every exhale, you are letting go of the world outside. [pause] Settle into this quiet space within you... the space where peace is not a goal, but your natural state. [pause]"
+        
+        ### YOUR TASK:
+        1. STRUCTURE:
+           - Introduction & Settling In (20%): Set the scene, prepare the body.
+           - Deep Visualization/Focus (60%): Expand every concept in the source text into sensory details (sights, sounds, feelings) like the example above.
+           - Integration & Closing (20%): Bring awareness back slowly.
+        
+        2. CRITICAL REQUIREMENTS:
+           - TARGET LENGTH: You MUST reach at least {target_words} words. 
+           - TECHNIQUE: Use the expansion technique shown in the example. Do not summarize. Elaborate.
+           - TONE: Calm, soothing, repetitive, and peaceful.
+           - FORMAT: Include [pause] and [breathing] tags frequently.
         
         Generate only the meditation script.
         """
@@ -68,11 +115,50 @@ async def generate_meditation_transcript_optimized(source_text: str) -> str:
         tt.system("Create peaceful meditation scripts."),
         id="meditation_transcript_optimized"
     )
-    
-    thread.append(tt.Message(transcript_prompt, "user"))
 
-    response = await model.chat_async(thread)
-    response_content = response.content if hasattr(response, 'content') else str(response)
+    # Cache Version
+    _CACHE_VERSION = "v4"
+
+    # For long durations (>= 10 min), use a multi-step generation to ensure length
+    if length and int(str(length).split()[0]) >= 10:
+        minutes = int(str(length).split()[0])
+        # Determine number of phases: 10m=2, 15m=3, 20m=4
+        num_phases = max(2, (minutes + 4) // 5) 
+        tu.logger.info(f"Triggering {num_phases}-phase generation for {minutes} min")
+        
+        all_phases = []
+        current_context = ""
+        
+        for i in range(num_phases):
+            phase_num = i + 1
+            is_first = (phase_num == 1)
+            is_last = (phase_num == num_phases)
+            
+            if is_first:
+                prompt = f"{transcript_prompt}\n\nTASK: Generate PHASE {phase_num} of {num_phases} (Introduction and beginning of the meditation). Aim for {int(minutes * 70)} words. Stop mid-meditation."
+            elif is_last:
+                prompt = f"Previous content was good. Now continue exactly where you left off. Generate Phase {phase_num} of {num_phases} (FINAL PHASE including the conclusion). Aim for ANOTHER {int(minutes * 70)} words. Bring the experience to a complete close."
+            else:
+                prompt = f"Good progress. Now continue exactly where you left off. Generate Phase {phase_num} of {num_phases} (Continuing the deep meditation body). Aim for ANOTHER {int(minutes * 70)} words. Be expansive and detailed."
+
+            if not is_first:
+                thread.append(tt.Message(all_phases[-1], "assistant"))
+            
+            thread.append(tt.Message(prompt, "user"))
+            response = await model.chat_async(thread, max_tokens=2500)
+            phase_content = response.content if hasattr(response, 'content') else str(response)
+            all_phases.append(phase_content)
+            tu.logger.info(f"Phase {phase_num} complete: {len(phase_content.split())} words")
+
+        response_content = "\n\n".join(all_phases)
+        tu.logger.info(f"Total multi-step words: {len(response_content.split())}")
+    else:
+        # Standard one-step generation for shorter durations
+        tu.logger.info(f"Using single-step generation for {length or 'default'} length")
+        thread.append(tt.Message(transcript_prompt, "user"))
+        response = await model.chat_async(thread, max_tokens=2500)
+        response_content = response.content if hasattr(response, 'content') else str(response)
+        tu.logger.info(f"Single-step words: {len(response_content.split())}")
     
     # Cache the result
     _transcript_cache[cache_key] = response_content
@@ -80,12 +166,14 @@ async def generate_meditation_transcript_optimized(source_text: str) -> str:
     return response_content
 
 async def generate_audio_from_transcript_optimized(transcript: str) -> bytes:
-    """Generate audio with optimized TTS settings"""
+    """Generate audio with optimized TTS settings and chunking for long transcripts"""
     
-    model = get_llm("gpt-4o")
+    model = get_llm("gpt-5.1-chat-latest")
+
     
-    # Optimize transcript for faster TTS
+    # Optimize transcript for faster TTS - remove transcript artifacts
     optimized_transcript = transcript.replace('[pause]', '...').replace('[breathing]', '...')
+    optimized_transcript = _remove_transcript_artifacts(optimized_transcript)
     
     audio_bytes = await model.text_to_speech_async(
         prompt=optimized_transcript,
@@ -94,7 +182,56 @@ async def generate_audio_from_transcript_optimized(transcript: str) -> bytes:
         instructions="Speak in a calm, soothing voice with natural pacing.",
     )
     
-    return audio_bytes
+    # Split transcript into chunks
+    chunks = []
+    text = optimized_transcript
+    while text:
+        if len(text) <= MAX_CHARS:
+            chunks.append(text)
+            break
+        split_idx = text.rfind('\n', 0, MAX_CHARS)
+        if split_idx == -1: split_idx = text.rfind('. ', 0, MAX_CHARS)
+        if split_idx == -1: split_idx = MAX_CHARS
+        chunks.append(text[:split_idx].strip())
+        text = text[split_idx:].strip()
+
+    tu.logger.info(f"Generating {len(chunks)} audio chunks for long meditation...")
+    audio_chunks = []
+    for i, chunk in enumerate(chunks):
+        if not chunk: continue
+        audio_chunk = await model.text_to_speech_async(
+            prompt=chunk,
+            voice="shimmer",
+            model="gpt-4o-mini-tts",
+            instructions="Speak in a calm, soothing voice. Maintain consistent tone.",
+        )
+        audio_chunks.append(audio_chunk)
+    
+    return await _concatenate_audio_chunks(audio_chunks)
+
+async def _concatenate_audio_chunks(audio_chunks: list[bytes]) -> bytes:
+    """Concatenate audio chunks using FFmpeg"""
+    try:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            chunk_paths = []
+            for i, chunk_data in enumerate(audio_chunks):
+                chunk_path = os.path.join(tmpdir, f"chunk_{i}.wav")
+                with open(chunk_path, "wb") as f:
+                    f.write(chunk_data)
+                chunk_paths.append(chunk_path)
+            
+            concat_list_path = os.path.join(tmpdir, "concat_list.txt")
+            with open(concat_list_path, "w") as f:
+                for cp in chunk_paths:
+                    clean_path = cp.replace('\\', '/')
+                    f.write(f"file '{clean_path}'\n")
+            
+            output_path = os.path.join(tmpdir, "output.wav")
+            subprocess.run(["ffmpeg", "-f", "concat", "-safe", "0", "-i", concat_list_path, "-c", "copy", "-y", output_path], check=True, capture_output=True)
+            with open(output_path, "rb") as f: return f.read()
+    except Exception as e:
+        tu.logger.error(f"FFmpeg concat failed: {e}")
+        return b"".join(audio_chunks)
 
 async def compress_audio_to_mp3_optimized(audio_bytes: bytes) -> bytes:
     """Compress audio with optimized FFmpeg settings"""
@@ -149,6 +286,7 @@ async def generate_audio_sync_optimized(
     message_id: str,
     spb_client: Client,
     content_id: str,
+    length: str = None  # Add length parameter
 ) -> tuple[str, str]:
     """Generate audio content with maximum parallelization"""
     
@@ -171,7 +309,7 @@ async def generate_audio_sync_optimized(
     
     # Step 3: Generate transcript first, then audio
     async with profile_operation("transcript_generation") as op:
-        transcript = await generate_meditation_transcript_optimized(source_content)
+        transcript = await generate_meditation_transcript_optimized(source_content, length)
         op.finish(transcript_length=len(transcript))
     
     # Step 4: Generate audio from transcript
@@ -219,11 +357,12 @@ async def generate_audio_content(
     content_id: str,
     conversation_id: str,
     message_id: str,
+    length: str = None,  # Add length parameter
 ) -> None:
     """Background task to generate audio content and update the database record"""
 
     tu.logger.info(f"Starting background audio generation for content {content_id}")
-    spb_client = get_supabase_client()
+    spb_client = get_supabase_admin_client(get_settings())
 
     async with get_background_session() as session:
         try:
@@ -234,6 +373,7 @@ async def generate_audio_content(
                 message_id=message_id,
                 spb_client=spb_client,
                 content_id=content_id,
+                length=length,
             )
 
             # Update the ContentGeneration record with the results
@@ -244,9 +384,17 @@ async def generate_audio_content(
             if content_generation:
                 content_generation.content_path = content_path
                 content_generation.transcript = transcript
+                # Set duration based on the prompt specification
+                duration = 180  # Default 3 minutes
+                if length:
+                    try:
+                        duration = int(str(length).split()[0]) * 60
+                    except:
+                        pass
+                content_generation.duration_seconds = duration
                 await session.commit()
                 tu.logger.info(
-                    f"Successfully completed audio generation for content {content_id}"
+                    f"Successfully completed audio generation for content {content_id} (duration: {duration}s)"
                 )
             else:
                 tu.logger.error(f"ContentGeneration record not found for id {content_id}")
@@ -389,7 +537,8 @@ async def collect_source_content(
 async def generate_meditation_transcript(source_text: str) -> str:
     """Generate meditation transcript from source content"""
 
-    model = get_llm("gpt-4o")
+    model = get_llm("gpt-5.1-chat-latest")
+
     transcript_prompt = dedent(
         f"""
         Based on the following spiritual and contemplative texts, create a peaceful 5-minute meditation script that captures the essence of the wisdom. The script should be:
@@ -428,11 +577,16 @@ async def generate_meditation_transcript(source_text: str) -> str:
 async def generate_audio_from_transcript(transcript: str) -> bytes:
     """Generate audio from transcript using OpenAI TTS"""
     
-    model = get_llm("gpt-4o")
+    model = get_llm("gpt-5.1-chat-latest")
+
+    # Remove transcript artifacts
+    cleaned_transcript = _remove_transcript_artifacts(transcript)
+
     audio_bytes = await model.text_to_speech_async(
-        prompt=transcript,
+        prompt=cleaned_transcript,
         voice="shimmer",
-        model="gpt-4o-mini-tts",
+                model="gpt-4o-mini-tts",
+
         instructions="""
         For sound effects transcript has tags like [breathing], [pause], [silence], etc.
         Please follow these instructions:

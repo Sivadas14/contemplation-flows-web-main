@@ -1,8 +1,8 @@
 import uuid
 from io import BytesIO
-from tuneapi import tu
 import random
 from textwrap import dedent
+import json
 
 from supabase import Client
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -10,18 +10,29 @@ from sqlalchemy import select, func
 from sqlalchemy.orm import selectinload
 from PIL import Image, ImageDraw, ImageFont
 import textwrap
+import os
+import logging
+from pydantic import ValidationError
+from openai import OpenAI
+
+# Import tuneapi components correctly for version 8.0.18
+import tuneapi
 
 from src.db import (
     ContentGeneration,
     ContentType,
     Conversation,
     Message,
+    MessageRole,
     SourceDocument,
     DocumentChunk,
 )
-from src.settings import get_llm, get_supabase_client
+from src.settings import get_llm, get_supabase_client, get_supabase_admin_client, get_settings
 from src.db import get_db_session, get_background_session
+from src.wire import ContemplationCardContent
 
+# Set up logger
+logger = logging.getLogger(__name__)
 
 CONTEMPLATION_PROMPTS = [
     "Soft morning light filtering through bamboo leaves",
@@ -78,11 +89,11 @@ async def generate_image_content(
 ) -> None:
     """Background task to generate image content and update the database record"""
 
-    spb_client = get_supabase_client()
+    spb_client = get_supabase_admin_client(get_settings())
 
     async with get_background_session() as session:
         try:
-            tu.logger.info(f"Starting background image generation for content {content_id}")
+            logger.info(f"Starting background image generation for content {content_id}")
 
             # Generate the image content
             content_path, cc_text = await generate_contemplation_card_sync(
@@ -102,16 +113,16 @@ async def generate_image_content(
                 content_generation.content_path = content_path
                 content_generation.cc_text = cc_text
                 await session.commit()
-                tu.logger.info(
+                logger.info(
                     f"Successfully completed image generation for content {content_id}"
                 )
             else:
-                tu.logger.error(f"ContentGeneration record not found for id {content_id}")
+                logger.error(f"ContentGeneration record not found for id {content_id}")
                 # No changes were made, but ensure session is clean
                 await session.rollback()
 
         except Exception as e:
-            tu.logger.error(
+            logger.error(
                 f"Error in background image generation for content {content_id}: {e}"
             )
             # Session will be automatically rolled back by the context manager
@@ -127,10 +138,27 @@ async def generate_contemplation_card_sync(
 ) -> tuple[str, str]:
     """Generate contemplation card synchronously and return content_path and cc_text"""
 
-    prompt = random.choice(CONTEMPLATION_PROMPTS)
-    quote = await _get_quote_from_citations_or_random(
-        session, conversation_id, message_id
-    )
+    # Try to use user's question, fallback to existing behavior
+    user_question = await _get_last_user_message(session, conversation_id)
+    
+    if user_question and len(user_question) > 10:  # Minimum length check
+        try:
+            prompt, quote = await _generate_prompt_and_quote_from_question(user_question)
+            logger.info(f"Generated card from user question: {user_question[:50]}...")
+        except Exception as e:
+            logger.warning(f"Question-based generation failed, using fallback: {e}")
+            # Fallback to existing behavior
+            prompt = random.choice(CONTEMPLATION_PROMPTS)
+            quote = await _get_quote_from_citations_or_random(
+                session, conversation_id, message_id
+            )
+    else:
+        # No question or too short, use existing behavior
+        logger.info("No valid user question found, using standard prompts")
+        prompt = random.choice(CONTEMPLATION_PROMPTS)
+        quote = await _get_quote_from_citations_or_random(
+            session, conversation_id, message_id
+        )
 
     # Get the conversation to get the user_id
     query = select(Conversation).where(Conversation.id == conversation_id)
@@ -140,14 +168,14 @@ async def generate_contemplation_card_sync(
         raise ValueError(f"Conversation with id {conversation_id} not found")
 
     # image gen
-    tu.logger.info(
+    logger.info(
         f"Generating contemplation card for conversation {conversation_id}/{message_id}"
     )
     pil_image = await _generate_image(prompt)
 
     # add caption to the image
     with_caption = add_caption_to_image(pil_image, quote)
-    tu.logger.info(f"Added caption to image: {with_caption.size}")
+    logger.info(f"Added caption to image: {with_caption.size}")
 
     # create content path
     content_path = f"contemplation-cards/{content_id}.png"
@@ -158,14 +186,14 @@ async def generate_contemplation_card_sync(
     img_bytes = img_buffer.getvalue()
 
     # upload to the supabase storage
-    tu.logger.info(f"Uploading image to supabase: {content_path}")
+    logger.info(f"Uploading image to supabase: {content_path}")
     spb_client.storage.from_("generations").upload(
         content_path,
         img_bytes,
         {"content-type": "image/png"},
     )
 
-    tu.logger.info(f"Successfully created image content generation: {content_id}")
+    logger.info(f"Successfully created image content generation: {content_id}")
     return content_path, prompt
 
 
@@ -238,7 +266,7 @@ async def _get_quote_from_citations_or_random(
 
     # Check if current message has citations
     if current_message and current_message.citations:
-        tu.logger.info(
+        logger.info(
             f"Found citations in current message: {len(current_message.citations)}"
         )
         # Get chunks from cited documents
@@ -282,7 +310,7 @@ async def _get_quote_from_citations_or_random(
                 all_citations.extend(msg.citations)
 
         if all_citations:
-            tu.logger.info(f"Found citations in conversation: {len(all_citations)}")
+            logger.info(f"Found citations in conversation: {len(all_citations)}")
             # Get chunks from any cited documents in the conversation
             cited_filenames = [citation.name for citation in all_citations]
             chunks_query = (
@@ -305,7 +333,7 @@ async def _get_quote_from_citations_or_random(
             else:
                 source_text = await _get_random_chunks_text(session)
         else:
-            tu.logger.info("No citations found, using random source file")
+            logger.info("No citations found, using random source file")
             source_text = await _get_random_chunks_text(session)
 
     # Generate a quote using LLM
@@ -338,7 +366,7 @@ async def _get_random_chunks_text(session: AsyncSession) -> str:
     random_doc = random_doc_result.scalar_one_or_none()
 
     if not random_doc:
-        tu.logger.warning("No active source documents found")
+        logger.warning("No active source documents found")
         return "The journey of a thousand miles begins with a single step."
 
     # Get random chunks from this document
@@ -352,14 +380,98 @@ async def _get_random_chunks_text(session: AsyncSession) -> str:
     chunks = chunks_result.scalars().all()
 
     if not chunks:
-        tu.logger.warning(f"No chunks found for document {random_doc.filename}")
+        logger.warning(f"No chunks found for document {random_doc.filename}")
         return "In silence, we find the deepest truths."
 
     return "\n\n".join(chunks)
 
 
+async def _get_last_user_message(
+    session: AsyncSession, 
+    conversation_id: str
+) -> str | None:
+    """Get the most recent user message from conversation. Returns None if not found."""
+    try:
+        query = (
+            select(Message)
+            .where(
+                Message.conversation_id == conversation_id,
+                Message.role == MessageRole.USER
+            )
+            .order_by(Message.created_at.desc())
+            .limit(1)
+        )
+        result = await session.execute(query)
+        message = result.scalar_one_or_none()
+        
+        if message and message.content and len(message.content.strip()) > 0:
+            return message.content.strip()
+        return None
+    except Exception as e:
+        logger.warning(f"Failed to get last user message: {e}")
+        return None
+
+
+async def _generate_prompt_and_quote_from_question(
+    user_question: str
+) -> tuple[str, str]:
+    """Generate image prompt and quote from user question using OpenAI structured output."""
+    
+    settings = get_settings()
+    client = OpenAI(api_key=settings.openai_token)
+    
+    # Get JSON schema from Pydantic model and ensure additionalProperties is false for strict mode
+    json_schema = ContemplationCardContent.model_json_schema()
+    # OpenAI requires additionalProperties: false for strict mode
+    json_schema["additionalProperties"] = False
+    
+    prompt = dedent(f"""
+    Based on this spiritual question: "{user_question}"
+    
+    Generate:
+    1. An image_prompt: A peaceful, contemplative image prompt (1 sentence) that visually represents this question
+    2. A quote: A short, meaningful contemplative quote (1-2 sentences) inspired by this question
+    """)
+    
+    try:
+        # Use OpenAI's structured output with JSON schema
+        response = client.chat.completions.create(
+            model="gpt-4o",
+            messages=[
+                {"role": "system", "content": "You generate structured JSON responses for spiritual contemplation content."},
+                {"role": "user", "content": prompt}
+            ],
+            response_format={
+                "type": "json_schema",
+                "json_schema": {
+                    "name": "contemplation_card_content",
+                    "strict": True,
+                    "schema": json_schema,
+                    "description": "Structured response for contemplation card generation"
+                }
+            },
+            temperature=0.7,
+        )
+        
+        # Parse response directly into Pydantic model
+        response_text = response.choices[0].message.content
+        parsed = ContemplationCardContent.model_validate_json(response_text)
+        
+        return parsed.image_prompt, parsed.quote
+        
+    except ValidationError as e:
+        logger.error(f"Pydantic validation error: {e}")
+        raise
+    except json.JSONDecodeError as e:
+        logger.error(f"JSON parsing error: {e}")
+        raise
+    except Exception as e:
+        logger.error(f"OpenAI API error: {e}")
+        raise
+
+
 async def _generate_image(prompt: str) -> Image.Image:
-    tu.logger.info(f"Generating image for prompt: {prompt}")
+    logger.info(f"Generating image for prompt: {prompt}")
     model = get_llm("gpt-4o")
     img_gen_response = await model.image_gen_async(
         prompt=prompt,
@@ -367,7 +479,7 @@ async def _generate_image(prompt: str) -> Image.Image:
         size="1792x1024",
         quality="standard",
     )
-    tu.logger.info(f"Generated image: {img_gen_response.image.size}")
+    logger.info(f"Generated image: {img_gen_response.image.size}")
     pil_image = img_gen_response.image
     return pil_image
 
@@ -397,12 +509,21 @@ def add_caption_to_image(
     orig_width, orig_height = image.size
 
     # Try to load a font, fall back to default if not available
-    font_fp = tu.joinp(
-        tu.joinp(tu.folder(__file__), "DM_Serif_Text"),
-        "DMSerifText-Regular.ttf",
-    )
-    tu.logger.info(f"Loading font from {font_fp}")
-    font = ImageFont.truetype(font_fp, font_size)
+    try:
+        # Try to find the font file
+        current_dir = os.path.dirname(os.path.abspath(__file__))
+        font_path = os.path.join(current_dir, "DM_Serif_Text", "DMSerifText-Regular.ttf")
+        
+        if os.path.exists(font_path):
+            font = ImageFont.truetype(font_path, font_size)
+            logger.info(f"Loaded font from {font_path}")
+        else:
+            # Fallback to default font
+            font = ImageFont.load_default()
+            logger.warning(f"Font not found at {font_path}, using default font")
+    except Exception as e:
+        logger.warning(f"Failed to load custom font: {e}, using default font")
+        font = ImageFont.load_default()
 
     # Create a temporary draw object to measure text
     temp_img = Image.new("RGB", (1, 1))

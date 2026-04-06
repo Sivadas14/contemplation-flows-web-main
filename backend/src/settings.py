@@ -1,7 +1,10 @@
-from tuneapi import tt, ta
-from typing import Literal, Optional
-
 from pydantic_settings import BaseSettings, SettingsConfigDict
+from supabase import create_client, Client
+from fastapi import Depends, Query, HTTPException
+print("[TRACE] settings.py import start")
+from typing import Optional
+from tuneapi import tt, ta, tu
+from polar_sdk import Polar
 
 
 class Settings(BaseSettings):
@@ -13,67 +16,156 @@ class Settings(BaseSettings):
     )
 
     # database settings
-    db_url: str
+    db_url: str = "postgresql+asyncpg://postgres:postgres@localhost:5432/postgres"
 
     # server settings
     host: str = "0.0.0.0"
     port: int = 8000
     prod: bool = False
 
+    backend_url: str = "https://www.arunachalasamudra.co.in"
+    frontend_url: str = "https://www.arunachalasamudra.co.in"
+
     # auth settings
-    jwt_secret: str
+    jwt_secret: str = "placeholder_secret_replace_this_in_production"
     jwt_algorithm: str = "HS256"
 
     # admin settings
     admin_default_password_length: int = 12
-    max_upload_file_size: int = 25  # MB
+    max_upload_file_size: int = 25
     allowed_upload_extensions: str = "pdf/txt/docx"
     generated_content_retention_days: int = 30
 
     # model settings
-    openai_token: str
+    openai_token: str = "dummy_token"
+    # supabase settings
+    supabase_url: str = "https://placeholder.supabase.co"
+    supabase_key: str = "placeholder_key"
+    supabase_service_role_key: str | None = None  # Service role key bypasses RLS
 
-    # supabase settings — kept optional for backward compatibility
-    # No longer required for authentication (moved to email+password)
-    supabase_url: str = ""
-    supabase_key: str = ""
+    polar_access_token: str | None = None
+    polar_webhook_secret: str | None = None
+    polar_base_api: str | None = None
+    polar_organization_id: str | None = None
 
-    # SMTP email settings
-    smtp_host: str = ""
-    smtp_port: int = 587
-    smtp_username: str = ""
-    smtp_password: str = ""
-    smtp_sender_email: str = ""
-    smtp_sender_name: str = "Arunachala Samudra"
-    smtp_use_tls: bool = True
-
-    # mode
+    # performance settings
     echo_db: bool = False
-
-    # Performance optimization settings
-    content_generation_timeout: int = 300  # 5 minutes for content generation
-    audio_compression_timeout: int = 60   # 1 minute for audio compression
-    video_encoding_timeout: int = 120     # 2 minutes for video encoding
-    cache_ttl: int = 3600                # 1 hour cache TTL
-    max_parallel_tasks: int = 4          # Maximum parallel tasks
-    enable_hardware_acceleration: bool = True  # Enable hardware acceleration
-    use_caching: bool = True              # Enable caching
-    optimize_for_speed: bool = True       # Optimize for speed over quality
+    content_generation_timeout: int = 300
+    audio_compression_timeout: int = 60
+    video_encoding_timeout: int = 120
+    cache_ttl: int = 3600
+    max_parallel_tasks: int = 4
+    enable_hardware_acceleration: bool = True
+    use_caching: bool = True
+    optimize_for_speed: bool = True
 
     def is_valid_upload_extension(self, extension: str) -> bool:
         return extension.lower() in self.allowed_upload_extensions.split("/")
 
 
-settings = Settings()
+# ⚠️ DO NOT USE THIS DIRECTLY
+# ✅ Correct way to handle global settings
+_settings = None
+
+def get_settings() -> Settings:
+    global _settings  # Important: declare as global
+    if _settings is None:
+        print("[TRACE] Loading Settings...")
+        try:
+            _settings = Settings()
+            print("[TRACE] Settings loaded successfully.")
+        except Exception as e:
+            # Fallback to defaults and log error
+            print(f"[TRACE] CRITICAL ERROR loading settings: {e}")
+            import traceback
+            traceback.print_exc() # Print full stack trace for better debugging
+            print("[TRACE] Fallback to construct model...")
+            # Create settings with default values (validation will still trigger so we use model_construct)
+            _settings = Settings.model_construct()
+            # Manually inject some essential defaults if they are not set
+            if not hasattr(_settings, "prod"): _settings.prod = False
+            if not hasattr(_settings, "db_url"): _settings.db_url = "postgresql+asyncpg://invalid"
+    return _settings
+
+# ---------- LLM Helper ----------
+
+def get_llm(model_name: str = "gpt-4o"):
+    """Create a TuneAPI model instance with the configured OpenAI token."""
+   
+    settings_instance = get_settings()
+    return  ta.Openai(id="gpt-4-turbo", api_token=settings_instance.openai_token)
 
 
-def get_llm(id: str):
-    return ta.Openai(id=id, api_token=settings.openai_token)
+
+# ---------- Supabase Client Helpers ----------
+
+def get_supabase_client(
+   settings_instance: Settings = Depends(get_settings)
+) -> Client:
+    """Create a Supabase client WITHOUT a user JWT."""
+    try:
+        # Use local variable instead of parameter
+    
+        actual_settings = settings_instance
+        
+        if not actual_settings.supabase_url:
+            raise ValueError("Supabase URL is empty")
+        if not actual_settings.supabase_url.startswith(("http://", "https://")):
+            raise ValueError(f"Invalid Supabase URL format: {actual_settings.supabase_url}")
+
+        client = create_client(
+            actual_settings.supabase_url,
+            actual_settings.supabase_key
+        )
+        return client
+
+    except Exception as e:
+        # logger.error("Error creating Supabase client: %s", e)
+        raise HTTPException(
+            status_code=500,
+            detail=e  )
 
 
-def get_supabase_client():
-    """Legacy Supabase client — only used if supabase_url/key are provided."""
-    if not settings.supabase_url or not settings.supabase_key:
-        raise RuntimeError("Supabase is not configured (supabase_url/supabase_key not set)")
-    from supabase import Client
-    return Client(settings.supabase_url, settings.supabase_key)
+
+def get_supabase_jwt_client(jwt_token: str,
+                            settings_instance: Settings = Depends(get_settings)
+                             ) -> Client:
+
+    supabase = create_client(settings_instance.supabase_url, settings_instance.supabase_key)
+    supabase.auth._session = {
+        "access_token": jwt_token,
+        "token_type": "bearer"
+    }
+    return supabase
+
+
+def get_supabase_admin_client(
+   settings_instance: Settings = Depends(get_settings)
+) -> Client:
+    """Create a Supabase client with SERVICE ROLE key (bypasses RLS)."""
+    try:
+        actual_settings = settings_instance
+        
+        if not actual_settings.supabase_url:
+            raise ValueError("Supabase URL is empty")
+        if not actual_settings.supabase_url.startswith(("http://", "https://")):
+            raise ValueError(f"Invalid Supabase URL format: {actual_settings.supabase_url}")
+        
+        # Use service role key if available, otherwise fall back to regular key
+        key = actual_settings.supabase_service_role_key or actual_settings.supabase_key
+        
+        client = create_client(
+            actual_settings.supabase_url,
+            key
+        )
+        return client
+
+    except Exception as e:
+        raise HTTPException(
+            status_code=500,
+            detail=str(e))
+
+
+
+
+__all__ = ['settings', 'get_settings', 'get_llm', 'get_supabase_client', 'get_supabase_admin_client', 'get_supabase_jwt_client', 'Settings']

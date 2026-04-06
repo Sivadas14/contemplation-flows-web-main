@@ -11,11 +11,12 @@ const ProtectedRoute: React.FC<ProtectedRouteProps> = ({
     children,
     redirectTo = '/signin'
 }) => {
-    const { isAuthenticated, isLoading } = useAuth();
+    const { isAuthenticated, loading } = useAuth();
+    console.log('🔒 [ProtectedRoute] isAuthenticated:', isAuthenticated, loading);
+
     const location = useLocation();
 
-    // Show loading spinner while checking authentication
-    if (isLoading) {
+    if (loading) {
         return (
             <div className="min-h-screen flex items-center justify-center" style={{ backgroundColor: 'rgb(236, 229, 223)' }}>
                 <div className="text-center">
@@ -26,13 +27,17 @@ const ProtectedRoute: React.FC<ProtectedRouteProps> = ({
         );
     }
 
-    // If not authenticated, redirect to sign-in page
+    // Safe check for component name if possible
+    const childName = React.isValidElement(children)
+        ? (typeof children.type === 'string' ? children.type : (children.type as any).name || 'UnknownComponent')
+        : 'UnknownNode';
+
     if (!isAuthenticated) {
-        // Save the attempted location so we can redirect back after login
+        console.log(`🔒 [ProtectedRoute] Access denied to ${childName}, redirecting to ${redirectTo}`);
         return <Navigate to={redirectTo} state={{ from: location }} replace />;
     }
 
-    // If authenticated, render the protected content
+    console.log(`🔓 [ProtectedRoute] Access granted to ${childName}`);
     return <>{children}</>;
 };
 

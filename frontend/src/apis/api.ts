@@ -16,9 +16,25 @@ import {
     MessageFeedbackRequest,
     NewUserRequest,
     RefreshTokenRequest,
-    SourceDocumentsResponse,
+    SourceDocumentResponse,
     UpdateConversationTitleRequest,
     User,
+    Plan,
+    PlanPrices,
+    UsageData,
+    DashboardCount,
+    PlanDistributionItem,
+    RecentUserItem,
+    UserProfile,
+    AdminUserDetail,
+    UpgradePreview,
+    DowngradePreview,
+    SubscriptionResponse,
+    Order,
+    OrdersListResponse,
+    Addon,
+    AddonSubscribeResponse,
+    Notification,
 } from './wire';
 
 
@@ -90,6 +106,13 @@ export const chatAPI = {
             });
 
             if (!response.ok) {
+                if (response.status === 403) {
+                    console.error('❌ [chatAPI] Forbidden (403) during streaming. Logging out...');
+                    localStorage.removeItem('accessToken');
+                    localStorage.removeItem('refreshToken');
+                    localStorage.removeItem('userProfile');
+                    window.location.href = '/signin?error=deactivated';
+                }
                 const errorText = await response.text();
                 throw new Error(`HTTP error! status: ${response.status}, message: ${errorText}`);
             }
@@ -146,36 +169,59 @@ export const chatAPI = {
                             }
                             // Handle plain text lines (for your custom format)
                             else {
-                                content = line;
+                                content = line + (line.endsWith('\n') ? '' : '\n');
                             }
 
-                            if (content) {
+                            if (content !== '') {
                                 // Handle special tags from your backend
+                                // Handle message_id
                                 if (content.includes('<message_id>') && content.includes('</message_id>')) {
                                     const match = content.match(/<message_id>(.*?)<\/message_id>/);
                                     if (match) {
                                         parsedResponse.message_id = match[1];
+                                        content = content.replace(match[0], '');
                                     }
-                                } else if (content.includes('<title>') && content.includes('</title>')) {
+                                }
+
+                                // Handle title
+                                if (content.includes('<title>') && content.includes('</title>')) {
                                     const match = content.match(/<title>(.*?)<\/title>/);
                                     if (match) {
                                         parsedResponse.title = match[1];
+                                        content = content.replace(match[0], '');
                                     }
-                                } else if (content.includes('<questions>')) {
-                                    // Start collecting questions - content after this will be questions
+                                }
+
+                                // Handle questions tags
+                                if (content.includes('<questions>')) {
                                     collectingQuestions = true;
-                                    continue;
-                                } else if (content.includes('</questions>')) {
-                                    // End collecting questions
+                                    content = content.replace('<questions>', '');
+                                }
+                                if (content.includes('</questions>')) {
                                     collectingQuestions = false;
-                                    continue;
-                                } else if (content.includes('<citations>')) {
-                                    // Start collecting citations
-                                    continue;
-                                } else if (content.includes('</citations>')) {
-                                    // End collecting citations
-                                    continue;
-                                } else if (content.startsWith('{') && content.includes('"name"')) {
+                                    content = content.replace('</questions>', '');
+                                }
+
+                                // Handle citations tags
+                                if (content.includes('<citations>')) {
+                                    content = content.replace('<citations>', '');
+                                }
+                                if (content.includes('</citations>')) {
+                                    content = content.replace('</citations>', '');
+                                }
+
+                                // If content is empty after stripping tags, continue
+                                if (content === '') continue;
+
+                                // Process remaining content
+                                if (collectingQuestions) {
+                                    if (content.trim()) {
+                                        if (!parsedResponse.questions) {
+                                            parsedResponse.questions = [];
+                                        }
+                                        parsedResponse.questions.push(content.trim());
+                                    }
+                                } else if (content.trim().startsWith('{') && content.includes('"name"')) {
                                     // Citation JSON
                                     try {
                                         const citation = JSON.parse(content);
@@ -185,34 +231,24 @@ export const chatAPI = {
                                         parsedResponse.message += content;
                                         onChunk(parsedResponse.message);
                                     }
-                                } else if (collectingQuestions && content.trim() && !content.includes('<') && !content.includes('>')) {
-                                    // Question content - add to questions array
-                                    if (!parsedResponse.questions) {
-                                        parsedResponse.questions = [];
-                                    }
-                                    parsedResponse.questions.push(content.trim());
-                                } else if (content.trim() && !content.includes('<') && !content.includes('>')) {
+                                } else {
                                     // Regular message content - accumulate and call onChunk
                                     parsedResponse.message += content;
                                     onChunk(parsedResponse.message);
-                                } else {
-                                    // Log unhandled content for debugging
-                                    console.log('Unhandled streaming content:', content);
                                 }
                             }
                         } catch (e) {
-                            // If JSON parsing fails, treat as plain text content
-                            if (collectingQuestions && line.trim() && !line.includes('<') && !line.includes('>')) {
-                                // Question content - add to questions array
-                                if (!parsedResponse.questions) {
-                                    parsedResponse.questions = [];
+                            // If JSON parsing fails, treat as plain text content (preserving formatting)
+                            if (collectingQuestions) {
+                                if (line.trim()) {
+                                    if (!parsedResponse.questions) {
+                                        parsedResponse.questions = [];
+                                    }
+                                    parsedResponse.questions.push(line.trim());
                                 }
-                                parsedResponse.questions.push(line.trim());
-                            } else if (line.trim() && !line.includes('<') && !line.includes('>')) {
-                                parsedResponse.message += line;
-                                onChunk(parsedResponse.message);
                             } else {
-                                console.warn('Error parsing streaming chunk:', e, 'Line:', line);
+                                parsedResponse.message += line + '\n';
+                                onChunk(parsedResponse.message);
                             }
                         }
                     }
@@ -246,6 +282,10 @@ export const chatAPI = {
         const response = await apiClient.put(`/chat/${id}/title`, request);
         return response.data;
     },
+    generateConversationTitle: async (id: string): Promise<Conversation> => {
+        const response = await apiClient.post(`/chat/${id}/title`);
+        return response.data;
+    },
     submitFeedback: async (conversationId: string, feedback: MessageFeedbackRequest): Promise<void> => {
         await apiClient.post(`/chat/${conversationId}/feedback`, feedback);
     },
@@ -260,17 +300,35 @@ export const contentAPI = {
     getContent: async (contentId: string): Promise<ContentGeneration> => {
         const response = await apiClient.get(`/content/${contentId}`);
         return response.data;
+    },
+    getImages: async (page = 1, limit = 10): Promise<ContentGeneration[]> => {
+        const response = await apiClient.get(`/content/images?page=${page}&limit=${limit}`);
+        return response.data;
+    },
+    getMedia: async (page = 1, limit = 10): Promise<ContentGeneration[]> => {
+        const response = await apiClient.get(`/content/media?page=${page}&limit=${limit}`);
+        return response.data;
     }
 };
 
 // Admin APIs
 export const adminAPI = {
-    listUsers: async (): Promise<ListUsersResponse> => {
-        const response = await apiClient.get('/admin/users');
+    listUsers: async (limit = 10, skip = 0): Promise<ListUsersResponse> => {
+        const response = await apiClient.get('/admin/users', {
+            params: { limit, skip }
+        });
+        return response.data;
+    },
+    getUserDetail: async (userId: string): Promise<AdminUserDetail> => {
+        const response = await apiClient.get(`/admin/users/${userId}`);
         return response.data;
     },
     deleteUser: async (userId: string): Promise<void> => {
         await apiClient.delete(`/admin/users/${userId}`);
+    },
+    toggleUserActive: async (userId: string): Promise<{ success: boolean; message: string; data: { is_active: boolean } }> => {
+        const response = await apiClient.patch(`/admin/users/${userId}/toggle-active`);
+        return response.data;
     },
     deleteContent: async (contentId: string): Promise<void> => {
         await apiClient.delete(`/admin/content/${contentId}`);
@@ -279,10 +337,187 @@ export const adminAPI = {
         const response = await apiClient.get('/admin/feedback');
         return response.data;
     },
-    listSourceData: async (): Promise<SourceDocumentsResponse> => {
+    listSourceData: async (): Promise<SourceDocumentResponse> => {
         const response = await apiClient.get('/admin/source-data/list');
         return response.data;
     },
+    getAllProfiles: async (): Promise<UserProfile[]> => {
+        const response = await apiClient.get('/profiles/'); // based on user request "profiles/"
+        return response.data;
+    },
+};
+// Add this to your existing API file
+export const usageAPI = {
+    getUsage: async (): Promise<UsageData> => {
+        const response = await apiClient.get('/usage');
+        return response.data;
+    }
+};
+
+export const addonAPI = {
+    getAddons: async (): Promise<Addon[]> => {
+        const response = await apiClient.get('/addon/');
+        return response.data;
+    }
+};
+
+export const paymentAPI = {
+    createCheckoutSession: async (
+        polarPlanId: string,
+        userId: string,
+        redirect_url?: string,
+        // cancelUrl?: string
+    ) => {
+        // Matches CURL: /api/subscriptions/checkout?polar_product_id=...&user_id=...&redirect_url=...
+        let url = `/subscriptions/checkout?polar_product_id=${polarPlanId}&user_id=${userId}`;
+        if (redirect_url) {
+            url += `&redirect_url=${encodeURIComponent(redirect_url)}`;
+        }
+        const response = await apiClient.post(url);
+        return response.data;
+    },
+
+    syncSubscription: async (userId: string): Promise<any> => {
+        // Matches CURL: GET /api/subscriptions/sync?user_id=...
+        const response = await apiClient.get(`/subscriptions/sync?user_id=${encodeURIComponent(userId)}`);
+        return response.data;
+    },
+
+    getUpgradePreview: async (polarProductId: string, userId: string): Promise<UpgradePreview> => {
+        // Matches user provided URL: /api/subscriptions/upgrade/previews?polar_product_id=...&user_id=...
+        const response = await apiClient.get(`/subscriptions/upgrade/previews?polar_product_id=${polarProductId}&user_id=${userId}`);
+        return response.data.data;
+    },
+
+    getSubscription: async (): Promise<SubscriptionResponse> => {
+        const response = await apiClient.get('/subscriptions/me');
+        return response.data;
+    },
+
+    upgradeSubscription: async (userId: string, newPolarPlanId: string): Promise<any> => {
+        // Matches POST /api/subscriptions/upgrades
+        // /v1/subscriptions/upgrade
+        const response = await apiClient.post('/subscriptions/upgrade', {
+            user_id: userId,
+            new_polar_plan_id: newPolarPlanId
+        });
+        return response.data;
+    },
+
+    cancelSubscription: async (userId: string, subscriptionId: string): Promise<any> => {
+        // Matches POST /api/subscriptions/cancel
+        const response = await apiClient.post('/subscriptions/cancel', {
+            user_id: userId,
+            subscription_id: subscriptionId
+        });
+        return response.data;
+    },
+
+    revokeSubscription: async (userId: string): Promise<any> => {
+        // Matches POST /api/subscriptions/revoke
+        const response = await apiClient.post('/subscriptions/revoke', {
+            user_id: userId
+        });
+        return response.data;
+    },
+
+    subscribeAddon: async (addonId: number, userId: string, successUrl: string): Promise<AddonSubscribeResponse> => {
+        // Matches POST /api/pollor/subscribe?addon_id=...&user_id=...&redirect_url=...
+        const response = await apiClient.post(`/pollor/subscribe?addon_id=${addonId}&user_id=${userId}&redirect_url=${encodeURIComponent(successUrl)}`);
+        return response.data;
+    },
+
+    getDowngradePreview: async (polarProductId: string, userId: string): Promise<DowngradePreview> => {
+        // Matches GET /api/subscriptions/downgrade/preview?polar_product_id=...&user_id=...
+        const response = await apiClient.get(`/subscriptions/downgrade/preview?polar_product_id=${polarProductId}&user_id=${userId}`);
+        return response.data.data;
+    },
+
+    downgradeSubscription: async (polarProductId: string, userId: string): Promise<any> => {
+        // Matches POST /api/subscriptions/downgrade/checkout
+        const response = await apiClient.post('/subscriptions/downgrade/checkout', {
+            polar_product_id: polarProductId,
+            user_id: userId
+        });
+        return response.data;
+    }
+};
+
+export const notificationAPI = {
+    getNotificationBar: async (id?: number | string): Promise<Notification | Notification[]> => {
+        const url = id ? `/notification-bar/${id}` : '/notification-bar/';
+        const response = await apiClient.get(url);
+        return response.data;
+    },
+    createNotification: async (data: Partial<Notification>): Promise<Notification> => {
+        const response = await apiClient.post('/notification-bar/', data);
+        return response.data;
+    },
+    updateNotification: async (id: number | string, data: Partial<Notification>): Promise<Notification> => {
+        const response = await apiClient.put(`/notification-bar/${id}`, data);
+        return response.data;
+    },
+    deleteNotification: async (id: number | string): Promise<void> => {
+        await apiClient.delete(`/notification-bar/${id}`);
+    }
+};
+
+// Dashboard APIs
+export const dashboardAPI = {
+    getCount: async (): Promise<DashboardCount> => {
+        const response = await apiClient.get('/dashboard/count');
+        return response.data;
+    },
+    getPlanDistribution: async (): Promise<PlanDistributionItem[]> => {
+        const response = await apiClient.get('/dashboard/plan_distribution');
+        return response.data;
+    },
+    getRecentUsers: async (limit = 10, days = 7): Promise<RecentUserItem[]> => {
+        const response = await apiClient.get(`/dashboard/recent_users?limit=${limit}&days=${days}`);
+        return response.data;
+    }
+};
+
+// Plan APIs
+export const plansAPI = {
+    getPlans: async (): Promise<Plan[]> => {
+        const response = await apiClient.get('/plans/');
+        return response.data;
+    },
+
+    getPlan: async (planId: number): Promise<Plan> => {
+        const response = await apiClient.get(`/plans/${planId}`);
+        return response.data;
+    },
+
+    createPlan: async (plan: Plan): Promise<Plan> => {
+        const response = await apiClient.post('/plans/', plan);
+        return response.data;
+    },
+
+    updatePlan: async (plan: Plan): Promise<Plan> => {
+        const response = await apiClient.put(`/plans/${plan.id}`, plan);
+        return response.data;
+    },
+
+    deletePlan: async (planId: number): Promise<void> => {
+        await apiClient.delete(`/plans/${planId}`);
+    }
+};
+
+export const ordersAPI = {
+    getOrdersAdmin: async (page = 1, limit = 1): Promise<OrdersListResponse> => {
+        const response = await apiClient.get(`/orders/?page=${page}&limit=${limit}`);
+        return response.data;
+    },
+    getOrders: async (page = 1, limit = 10): Promise<OrdersListResponse> => {
+        const response = await apiClient.get(`/orders/me?page=${page}&limit=${limit}`);
+        return response.data;
+    },
+    downloadInvoice: async (orderId: string): Promise<{ url: string }> => {
+        const response = await apiClient.get(`/orders/${orderId}/invoice`);
+        return response.data;
+    }
 };
 
 // Export all APIs
@@ -291,4 +526,10 @@ export default {
     chat: chatAPI,
     content: contentAPI,
     admin: adminAPI,
-}; 
+    payment: paymentAPI,
+    dashboard: dashboardAPI,
+    plans: plansAPI,
+    orders: ordersAPI,
+    addon: addonAPI,
+    notification: notificationAPI,
+};

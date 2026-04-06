@@ -4,6 +4,9 @@
 install:
 	uv sync
 
+migrate:
+	python -m uv run alembic revision --autogenerate -m "db updated"
+
 # Start the development server
 serve:
 	uv run uvicorn src.server:get_app --reload --host 0.0.0.0 --port 8000 --factory

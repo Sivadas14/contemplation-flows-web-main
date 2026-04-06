@@ -36,17 +36,9 @@ const Index = () => {
 
   const handleSend = async () => {
     if (query.trim()) {
-      try {
-        // 1. Create a new conversation
-        const conversation = await chatAPI.createConversation({ messages: [] });
-
-        // 2. Navigate to the chat with the conversation ID and initial query
-        navigate(`/chat/${conversation.id}`, { state: { initialQuery: query } });
-      } catch (error) {
-        console.error("Failed to create conversation:", error);
-        // Fallback to the previous behavior if conversation creation fails
-        navigate("/chat", { state: { initialQuery: query } });
-      }
+      // Navigate to the chat with the initial query
+      // The conversation will be created when the first message is sent
+      navigate("/chat", { state: { initialQuery: query } });
     }
   };
 
@@ -61,44 +53,31 @@ const Index = () => {
   };
 
   const handleQuickPrompt = async (prompt: string) => {
-    try {
-      // 1. Create a new conversation
-      const conversation = await chatAPI.createConversation({ messages: [] });
-
-      // 2. Navigate to the chat with the conversation ID and initial query (if any)
-      if (prompt.trim()) {
-        navigate(`/chat/${conversation.id}`, { state: { initialQuery: prompt } });
-      } else {
-        // For empty prompts (like "New Chat"), just navigate without any initial query
-        navigate(`/chat/${conversation.id}`);
-      }
-    } catch (error) {
-      console.error("Failed to create conversation:", error);
-      // Fallback to the previous behavior if conversation creation fails
-      if (prompt.trim()) {
-        navigate("/chat", { state: { initialQuery: prompt } });
-      } else {
-        navigate("/chat");
-      }
+    // Navigate to the chat with the initial query (if any)
+    if (prompt.trim()) {
+      navigate("/chat", { state: { initialQuery: prompt } });
+    } else {
+      // For empty prompts (like "New Chat"), just navigate without any initial query
+      navigate("/chat");
     }
   };
 
-  // Quick prompt options — Ramana Maharshi wisdom tradition
+  // Quick prompt options
   const quickPrompts = [
     {
       icon: <Heart className="w-4 h-4" />,
-      label: "Who Am I?",
-      prompt: "Teach me the practice of Self-enquiry — how do I ask 'Who am I?' and what should I look for?"
+      label: "Today's Meditation",
+      prompt: "What is the importance of self control?"
     },
     {
       icon: <MessageSquare className="w-4 h-4" />,
-      label: "Ramana's Wisdom",
-      prompt: "Share a teaching of Bhagavan Ramana Maharshi that is most relevant for a seeker today."
+      label: "Share thoughts",
+      prompt: "Share some thoughts of Bhagavan Ramana Maharshi about wisdom."
     },
     {
       icon: <HelpCircle className="w-4 h-4" />,
-      label: "Ease My Mind",
-      prompt: "I am caught in fear and worry. What did Ramana Maharshi teach about overcoming this?"
+      label: "Resolve confusion",
+      prompt: "What are some ways to reduce confusion?"
     },
     {
       icon: <Plus className="w-4 h-4" />,
@@ -135,28 +114,28 @@ const Index = () => {
   };
 
   return (
-    <div className="min-h-screen flex items-start justify-center p-4 pt-16" style={{ backgroundColor: 'rgb(236, 229, 223)' }}>
+    <div className="min-h-full flex items-start justify-center p-4 md:pt-16 pb-20" style={{ backgroundColor: 'rgb(236, 229, 223)' }}>
       <div className="w-full max-w-6xl mx-auto">
-        {/* User Menu in top right */}
-        <div className="flex justify-end mb-8">
+        {/* User Menu in top right - Hidden on mobile as it's in sidebar */}
+        <div className="hidden md:flex justify-end mb-8">
           <UserMenu />
         </div>
 
-        <div className="text-center mb-16">
-          <h1 className="text-6xl font-heading text-brand-heading mb-8">
+        <div className="text-center mb-10 md:mb-16 mt-8 md:mt-0">
+          <h1 className="text-4xl md:text-6xl font-heading text-brand-heading mb-4 md:mb-8">
             Mindful AI
           </h1>
         </div>
 
         {/* Quick Prompts */}
-        <div className="max-w-2xl mx-auto mb-12">
-          <div className="flex flex-wrap justify-center gap-3">
+        <div className="max-w-2xl mx-auto mb-10 md:mb-12">
+          <div className="flex flex-wrap justify-center gap-2 md:gap-3">
             {quickPrompts.map((prompt, index) => (
               <Button
                 key={index}
                 onClick={() => handleQuickPrompt(prompt.prompt)}
                 variant="outline"
-                className="flex items-center gap-2 px-4 py-2 rounded-full bg-white/80 hover:bg-white border-gray-200 text-brand-body font-body transition-all duration-200 hover:scale-105 hover:border-brand-button"
+                className="flex items-center gap-2 px-3 md:px-4 py-1.5 md:py-2 rounded-full bg-white/80 hover:bg-white border-gray-200 text-brand-body text-sm md:text-base font-body transition-all duration-200 hover:scale-105 hover:border-brand-button"
               >
                 {prompt.icon}
                 {prompt.label}
@@ -173,13 +152,13 @@ const Index = () => {
             </div>
           ) : conversations.length === 0 ? (
             <div className="text-center py-8">
-              <h2 className="text-2xl font-heading text-brand-heading mb-4">No conversations</h2>
+              <h2 className="text-xl md:text-2xl font-heading text-brand-heading mb-4">No conversations</h2>
               <p className="text-brand-body font-body">Start a new conversation above!</p>
             </div>
           ) : (
             <>
-              <h2 className="text-2xl font-heading text-brand-heading mb-6 text-center">Previous Conversations</h2>
-              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+              <h2 className="text-xl md:text-2xl font-heading text-brand-heading mb-6 text-center">Previous Conversations</h2>
+              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
                 {conversations.map((conversation) => (
                   <div
                     key={conversation.id}

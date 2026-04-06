@@ -4,11 +4,14 @@ from tuneapi import tu, tt
 import datetime
 from uuid import uuid4
 from fastapi import Request
-from ssl import create_default_context
+from ssl import create_default_context, CERT_REQUIRED, CERT_NONE
+import ssl
 import enum
 
+from sqlalchemy.dialects import postgresql as pg
 from sqlalchemy import (
     UUID as SQLAlchemyUUID,
+    UUID,
     DateTime,
     Dialect,
     func,
@@ -19,6 +22,7 @@ from sqlalchemy import (
     String,
     create_engine,
     Engine,
+    Numeric,
     ForeignKey,
     BigInteger,
     Boolean,
@@ -53,8 +57,9 @@ from sqlalchemy.orm import (
 from sqlalchemy.types import TypeDecorator
 from sqlalchemy import MetaData
 
-from src.settings import settings
+from src.settings import Settings, get_settings
 from src import wire
+from fastapi import Depends
 
 import tiktoken
 
@@ -201,11 +206,18 @@ class PydanticModel(TypeDecorator[tt.BM]):
         return self.model_class.model_validate(value)
 
 
-def connect_to_postgres(sync: bool = False) -> AsyncEngine | Engine:
-    import ssl as _ssl
+def connect_to_postgres(sync: bool = False
+                        ) -> AsyncEngine | Engine:
+    settings = get_settings()  # Get actual settings instance
     ssl_context = create_default_context()
     ssl_context.check_hostname = False
-    ssl_context.verify_mode = _ssl.CERT_NONE  # Supabase uses pooler certs that need this
+    
+    # In production, we usually want verify_mode=CERT_REQUIRED.
+    # But settings.prod is a bool, so we map it to ssl enums.
+    if settings.prod:
+        ssl_context.verify_mode = ssl.CERT_REQUIRED
+    else:
+        ssl_context.verify_mode = ssl.CERT_NONE
     
     # Enhanced connection pool settings to prevent leaks
     pool_settings = {
@@ -214,8 +226,8 @@ def connect_to_postgres(sync: bool = False) -> AsyncEngine | Engine:
         "pool_timeout": 30,      # Seconds to wait for connection from pool
         "pool_recycle": 3600,    # Recycle connections every hour
         "pool_pre_ping": True,   # Verify connections before use
-        "echo": settings.echo_db,
-        "echo_pool": settings.echo_db,  # Only echo pool events if echo_db is True
+        "echo": get_settings().echo_db,
+        "echo_pool": get_settings().echo_db,  # Only echo pool events if echo_db is True
     }
     
     if sync:
@@ -231,26 +243,48 @@ def connect_to_postgres(sync: bool = False) -> AsyncEngine | Engine:
     )
 
 
-def get_db_session(
-    sync: bool = False,
-) -> AsyncSession | Session:
+# def get_db_session(
+#     sync: bool = False,
+# ) -> AsyncSession | Session:
     
-    # db_engine = connect_to_postgres(sync=sync)
+#     # db_engine = connect_to_postgres(sync=sync)
     
-    # Use shared engine from app state
-    from fastapi import Request
-    from contextlib import asynccontextmanager
+#     # Use shared engine from app state
+#     from fastapi import Request
+#     from contextlib import asynccontextmanager
     
-    # This should be used in FastAPI dependency injection context
-    # For background tasks, we need a different approach
+#     # This should be used in FastAPI dependency injection context
+#     # For background tasks, we need a different approach
     
-    if sync:
-        db_engine = connect_to_postgres(sync=True)
-        factory = sessionmaker(db_engine, expire_on_commit=False)
-    else:
-        db_engine = connect_to_postgres(sync=False)
-        factory = async_sessionmaker(db_engine, expire_on_commit=False)
-    return factory()
+#     if sync:
+#         db_engine = connect_to_postgres(sync=True)
+#         factory = sessionmaker(db_engine, expire_on_commit=False)
+#     else:
+#         db_engine = connect_to_postgres(sync=False)
+#         factory = async_sessionmaker(db_engine, expire_on_commit=False)
+#     return factory()
+
+
+from typing import AsyncGenerator
+from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
+from sqlalchemy.orm import Session
+
+async def get_db_session(request: Request) -> AsyncGenerator[AsyncSession, None]:
+    """
+    Get a database session using the shared engine from app state.
+    This prevents creating a new engine/connection pool for every request.
+    """
+    session_factory = request.app.state.db_session_factory
+    session: AsyncSession = session_factory()
+
+    try:
+        yield session
+    except Exception as e:
+        await session.rollback()
+        raise
+    finally:
+        await session.close()
+
 
 
 async def get_db_session_fa(request: Request) -> AsyncGenerator[AsyncSession, None]:
@@ -283,6 +317,167 @@ class UserRole(enum.Enum):
     USER = "user"
     ADMIN = "admin"
 
+class BillingCycle(enum.Enum):
+    MONTHLY="MONTHLY"
+    YEARLY="YEARLY"
+
+
+class PlanType(enum.Enum):
+    FREE="FREE"
+    BASIC="BASIC"
+    PRO="PRO"
+
+
+    
+from sqlalchemy import Column, String, Integer, Boolean, ForeignKey, DECIMAL
+from sqlalchemy.orm import relationship
+from sqlalchemy.ext.declarative import declarative_base
+
+# Consolidating towards the main Base defined above
+# Base = declarative_base() # Removed redundant Base
+
+
+# ------------------ PLANS ------------------ #
+
+from sqlalchemy.orm import Mapped, mapped_column, relationship, DeclarativeBase
+from sqlalchemy import String, Integer, Boolean, ForeignKey, DECIMAL
+
+
+# Consolidating towards the main Base defined above
+# class Base(DeclarativeBase):
+#    pass
+
+
+# ------------------ PLANS ------------------ #
+
+class NotificationBar(Base):
+    __tablename__ = "notification_bar"
+
+    id: Mapped[int] = mapped_column(
+        Integer,
+        primary_key=True,
+        autoincrement=True,
+    )
+
+    message: Mapped[str] = mapped_column(Text, nullable=False)
+
+    created_at: Mapped[datetime.datetime] = mapped_column(
+        DateTime(timezone=True),
+        server_default=func.now(),
+        nullable=False,
+    )
+    active: Mapped[bool] = mapped_column(Boolean, default=True)
+
+
+class Plan(Base):
+    __tablename__ = "plans"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    name: Mapped[str] = mapped_column(String, nullable=False)
+    description: Mapped[str | None] = mapped_column(String, nullable=True)
+
+    active: Mapped[bool] = mapped_column(Boolean, default=True)
+    is_recommended: Mapped[bool] = mapped_column(Boolean, default=False)
+    is_free: Mapped[bool] = mapped_column(Boolean, default=True)
+
+    # limits
+    chat_limit: Mapped[str | None] = mapped_column(String)  # "1" or "Unlimited"
+    card_limit: Mapped[int | None] = mapped_column(Integer)
+    
+    max_meditation_duration: Mapped[int | None] = mapped_column(Integer)
+    is_audio: Mapped[bool] = mapped_column(Boolean, default=False)
+    is_video: Mapped[bool] = mapped_column(Boolean, default=False)
+    polar_plan_id: Mapped[str | None] = mapped_column(String, nullable=True, unique=True)
+
+    plan_type: Mapped[PlanType] = mapped_column(
+        pg_enum(PlanType, name="plan_type_enum", create_type=True),
+        default=PlanType.BASIC,
+        nullable=False,
+    )
+    billing_cycle: Mapped[BillingCycle] = mapped_column(
+    pg_enum(BillingCycle, name="billing_cycle_enum", create_type=True),
+    default=BillingCycle.MONTHLY,
+    nullable=False,
+)
+
+
+
+    # Relationships
+    prices: Mapped[list["PlanPrice"]] = relationship(
+        back_populates="plan",
+        cascade="all, delete-orphan"
+    )
+
+    features: Mapped[list["PlanFeature"]] = relationship(
+        back_populates="plan",
+        cascade="all, delete-orphan",
+        order_by="PlanFeature.order"
+    )
+
+    features_v1: Mapped[list["PlanFeatureV1"]] = relationship(
+        back_populates="plan",
+        cascade="all, delete-orphan",
+        order_by="PlanFeatureV1.order"
+    )
+
+
+
+
+
+class PlanPrice(Base):
+    __tablename__ = "plan_prices"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    plan_id: Mapped[int] = mapped_column(Integer, ForeignKey("plans.id"))
+    currency: Mapped[str] = mapped_column(String)       # "INR" | "USD"
+    price: Mapped[float] = mapped_column(DECIMAL(10, 2))
+    polar_price_id: Mapped[str | None] = mapped_column(String, nullable=True, unique=True)
+
+    plan: Mapped["Plan"] = relationship(back_populates="prices")
+
+
+
+class PlanFeature(Base):
+    __tablename__ = "plan_features"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    plan_id: Mapped[int] = mapped_column(Integer, ForeignKey("plans.id"))
+
+    feature_text: Mapped[str] = mapped_column(String)
+    order: Mapped[int] = mapped_column(Integer, default=0)
+
+    plan: Mapped["Plan"] = relationship(back_populates="features")
+
+
+
+
+class Feature(Base):
+    __tablename__ = "features"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    feature_text: Mapped[str] = mapped_column(String, unique=True, nullable=False)
+
+    # Relationships
+    plans: Mapped[list["PlanFeatureV1"]] = relationship(back_populates="feature")
+
+
+class PlanFeatureV1(Base):
+    __tablename__ = "plan_features_v1"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    plan_id: Mapped[int] = mapped_column(Integer, ForeignKey("plans.id"))
+    feature_id: Mapped[int] = mapped_column(Integer, ForeignKey("features.id"))
+
+    plan: Mapped["Plan"] = relationship(back_populates="features_v1")
+    feature: Mapped["Feature"] = relationship(back_populates="plans")
+    order: Mapped[int] = mapped_column(Integer, default=0)
+
+    __table_args__ = (
+        Index("idx_plan_feature_link", "plan_id", "feature_id", unique=True),
+    )
+
+
+
 
 class UserProfile(Base):
     __tablename__ = "user_profiles"
@@ -291,53 +486,224 @@ class UserProfile(Base):
     created_at: Mapped[default_timestamp]
     updated_at: Mapped[updated_timestamp]
     last_active_at: Mapped[default_timestamp]
-    # phone_number kept nullable for backward compatibility
-    phone_number: Mapped[str | None] = mapped_column(String, unique=True, nullable=True)
-    phone_verified: Mapped[bool] = mapped_column(Boolean, default=False)
-    # Email + password authentication fields
-    email: Mapped[str | None] = mapped_column(String, unique=True, nullable=True)
-    password_hash: Mapped[str | None] = mapped_column(String, nullable=True)
+
+    # NEW — link to auth.users
+    auth_user_id: Mapped[SQLAlchemyUUID] = mapped_column(
+       SQLAlchemyUUID,
+        unique=True,
+        nullable=False,
+        index=True
+    )
+    country_code : Mapped[str] = mapped_column(String,nullable=True)
+    email_id : Mapped[str] = mapped_column(String,nullable=False)
+    phone_number : Mapped[str] = mapped_column(String,nullable=True,unique=False)
     name: Mapped[str | None] = mapped_column(String, nullable=True)
     role: Mapped[UserRole] = mapped_column(
         pg_enum(UserRole, name="user_role_enum", create_type=True),
         default=UserRole.USER,
         nullable=False,
     )
-    is_signed_in: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
 
-    # Relationships
+    polar_customer_id: Mapped[str | None] = mapped_column(String, nullable=True, unique=True)
+    
+    plan_type: Mapped[PlanType] = mapped_column(
+        pg_enum(PlanType, name="plan_type_enum", create_type=False),
+        default=PlanType.BASIC,
+        nullable=True,
+    )
+
+    is_active: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False, server_default="true")
+
+    customer_token: Mapped[str | None] = mapped_column(String, nullable=True)
+    token_exp: Mapped[datetime.datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+        
+    subscriptions: Mapped[list["Subscription"]] = relationship(
+        "Subscription", back_populates="user", cascade="all, delete-orphan"
+    )
+
+
     conversations: Mapped[list["Conversation"]] = relationship(
         "Conversation", back_populates="user", cascade="all, delete-orphan"
     )
     content_generations: Mapped[list["ContentGeneration"]] = relationship(
-        "ContentGeneration", back_populates="user", cascade="all, delete-orphan"
-    )
-    # Remove source_documents relationship since they're now shared
-    # source_documents: Mapped[list["SourceDocument"]] = relationship(
-    #     "SourceDocument", back_populates="user", cascade="all, delete-orphan"
-    # )
-
-    __table_args__ = (
-        # HIGH IMPACT: Email lookup (primary auth field)
-        Index("idx_user_profile_email", "email"),
-        # Phone number lookup for backward compat
-        Index("idx_user_profile_phone", "phone_number"),
-        # MEDIUM IMPACT: Role filtering
-        Index("idx_user_profile_role", "role"),
-        # MEDIUM IMPACT: Last active for analytics
-        Index("idx_user_profile_last_active", "last_active_at"),
-    )
+            "ContentGeneration", back_populates="user", cascade="all, delete-orphan"
+        )
 
     async def to_bm(self) -> wire.User:
         return wire.User(
             id=str(self.id),
-            email=self.email or "",
-            email_verified=self.phone_verified,  # reuse existing verified flag
+            phone_number=self.phone_number,
+            email_id=self.email_id,
+            country_code=self.country_code,
+            phone_verified=True,  # Defaulting to true as not explicitly tracked in DB yet
             name=self.name,
             role=self.role.value,
-            last_active=self.last_active_at,
+            plan_type=self.plan_type.value if hasattr(self.plan_type, "value") else str(self.plan_type),
             created_at=self.created_at,
+            last_active=self.last_active_at,
+            is_active=self.is_active,
         )
+
+    
+
+    
+class SubscriptionStatus(enum.Enum):
+    INCOMPLETE = "incomplete"
+    INCOMPLETE_EXPIRED = "incomplete_expired"
+    TRIALING = "trialing"
+    ACTIVE = "active"
+    PAST_DUE = "past_due"
+    CANCELED = "canceled"
+    UNPAID = "unpaid"
+
+
+class Subscription(Base):
+    __tablename__ = "subscriptions"
+
+    id: Mapped[pkey_uuid]
+    created_at: Mapped[default_timestamp]
+    updated_at: Mapped[updated_timestamp]
+
+    user_id: Mapped[fkey_uuid] = mapped_column(
+        ForeignKey("user_profiles.id", ondelete="CASCADE"), nullable=False
+    )
+    plan_id: Mapped[int] = mapped_column(
+        ForeignKey("plans.id", ondelete="SET NULL"), nullable=True
+    )
+    
+    polar_subscription_id: Mapped[str] = mapped_column(String, nullable=False, unique=True)
+    status: Mapped[SubscriptionStatus] = mapped_column(
+        pg_enum(SubscriptionStatus, name="subscription_status_enum", create_type=True),
+        default=SubscriptionStatus.INCOMPLETE,
+        nullable=False,
+    )
+    current_period_start: Mapped[datetime.datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    current_period_end: Mapped[datetime.datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    cancel_at_period_end: Mapped[bool] = mapped_column(Boolean, default=False)
+    canceled_at: Mapped[datetime.datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    ended_at: Mapped[datetime.datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+
+    user: Mapped["UserProfile"] = relationship("UserProfile", back_populates="subscriptions")
+    plan: Mapped["Plan"] = relationship("Plan")
+
+    __table_args__ = (
+        Index("idx_subscription_user_id", "user_id"),
+        Index("idx_subscription_polar_id", "polar_subscription_id"),
+        Index("idx_subscription_status", "status"),
+    )
+
+
+
+class SubscriptionHistory(Base):
+    __tablename__ = "subscription_history"
+
+    id: Mapped[pkey_uuid]
+    created_at: Mapped[default_timestamp]  # specific to history entry creation
+
+    # Link to the main subscription record
+    subscription_id: Mapped[fkey_uuid] = mapped_column(
+        ForeignKey("subscriptions.id", ondelete="CASCADE"), nullable=False
+    )
+    
+    # Snapshot of the state BEFORE change
+    previous_plan_id: Mapped[int] = mapped_column(
+        ForeignKey("plans.id", ondelete="SET NULL"), nullable=True
+    )
+    
+    # Just for reference, in case main sub is deleted/changed
+    polar_subscription_id: Mapped[str] = mapped_column(String, nullable=False)
+    
+    # Status at time of archiving
+    status: Mapped[SubscriptionStatus] = mapped_column(
+        pg_enum(SubscriptionStatus, name="subscription_status_enum", create_type=False),
+        nullable=False,
+    )
+    
+    archived_at: Mapped[datetime.datetime] = mapped_column(
+        DateTime(timezone=True), 
+        default=func.timezone("UTC", func.statement_timestamp())
+    )
+
+    user_id: Mapped[fkey_uuid] = mapped_column(
+        ForeignKey("user_profiles.id", ondelete="CASCADE"), nullable=False
+    )
+
+    # Relationships
+    subscription: Mapped["Subscription"] = relationship("Subscription")
+    previous_plan: Mapped["Plan"] = relationship("Plan")
+    user: Mapped["UserProfile"] = relationship("UserProfile")
+
+    __table_args__ = (
+        Index("idx_sub_history_user_id", "user_id"),
+        Index("idx_sub_history_subscription_id", "subscription_id"),
+    )
+
+
+class Transaction(Base):
+    __tablename__ = "transactions"
+
+    id: Mapped[pkey_uuid]
+    created_at: Mapped[default_timestamp]
+
+    user_id: Mapped[fkey_uuid] = mapped_column(ForeignKey("user_profiles.id", ondelete="SET NULL"), nullable=True)
+    plan_id: Mapped[int | None] = mapped_column(ForeignKey("plans.id", ondelete="SET NULL"), nullable=True)
+
+    amount: Mapped[float] = mapped_column(DECIMAL(10, 2), nullable=False)
+    currency: Mapped[str] = mapped_column(String, nullable=False, default="USD")
+
+    polar_order_id: Mapped[str | None] = mapped_column(String, nullable=True, unique=True)
+
+    user: Mapped["UserProfile"] = relationship("UserProfile")
+    plan: Mapped["Plan"] = relationship("Plan")
+
+    __table_args__ = (
+        Index("idx_transaction_user_id", "user_id"),
+        Index("idx_transaction_created_at", "created_at"),
+    )
+
+
+    
+class UserAddon(Base):
+    __tablename__ = "user_addons"
+
+    id: Mapped[pkey_uuid]
+    created_at: Mapped[default_timestamp]
+    updated_at: Mapped[updated_timestamp]
+
+    user_id: Mapped[fkey_uuid] = mapped_column(
+        ForeignKey("user_profiles.id", ondelete="CASCADE"), nullable=False
+    )
+    addon_id: Mapped[int] = mapped_column(
+        ForeignKey("addon_types.id", ondelete="CASCADE"), nullable=False
+    )
+
+    polar_order_id: Mapped[str | None] = mapped_column(String, nullable=True)
+    
+    # Track usage directly
+    limit_value: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    used_value: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    
+    # status: active, exhausted
+    status: Mapped[str] = mapped_column(String, default="active", nullable=False)
+
+    # Relationships
+    user: Mapped["UserProfile"] = relationship("UserProfile")
+    addon: Mapped["AddonType"] = relationship("AddonType")
+
+    __table_args__ = (
+        Index("idx_user_addon_user_id", "user_id"),
+        Index("idx_user_addon_status", "status"),
+    )
+
+
 
 
 class OTPSessionType(enum.Enum):
@@ -380,34 +746,6 @@ class OTPSession(Base):
     __table_args__ = ()
 
 
-class EmailOTPType:
-    """Constants for email OTP types — stored as plain strings to avoid enum mismatches."""
-    VERIFICATION = "verification"
-    PASSWORD_RESET = "password_reset"
-
-
-class EmailOTP(Base):
-    """Stores OTP codes sent via email for verification and password resets."""
-    __tablename__ = "email_otps"
-
-    id: Mapped[pkey_uuid]
-    email: Mapped[str] = mapped_column(String, nullable=False)
-    otp_code: Mapped[str] = mapped_column(String(10), nullable=False)
-    otp_type: Mapped[str] = mapped_column(String(20), nullable=False)
-    attempts: Mapped[int] = mapped_column(Integer, default=0)
-    max_attempts: Mapped[int] = mapped_column(Integer, default=5)
-    expires_at: Mapped[datetime.datetime] = mapped_column(
-        DateTime(timezone=True), nullable=False
-    )
-    used: Mapped[bool] = mapped_column(Boolean, default=False)
-    created_at: Mapped[default_timestamp]
-
-    __table_args__ = (
-        Index("idx_email_otp_email_type", "email", "otp_type"),
-        Index("idx_email_otp_expires", "expires_at"),
-    )
-
-
 # ============================================================================
 # 2. CHAT & CONVERSATIONS TABLES
 # ============================================================================
@@ -419,6 +757,43 @@ class MessageRole(enum.Enum):
 class FeedbackType(enum.Enum):
     POSITIVE = "positive"
     NEGATIVE = "negative"
+
+
+class AddonUnitType(enum.Enum):
+    CARDS = "CARDS"
+    MINUTES = "MINUTES"
+
+
+
+class AddonType(Base):
+    __tablename__ = "addon_types"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+
+    name: Mapped[str] = mapped_column(String, nullable=False)
+    description: Mapped[str | None] = mapped_column(String, nullable=True)
+
+    # enum: cards | minutes
+    unit_type: Mapped[AddonUnitType] = mapped_column(
+        pg_enum(AddonUnitType, name="addon_unit_type_enum", create_type=True),
+        nullable=False
+    )
+
+    # quantity of units (e.g., 10 cards, 100 minutes)
+    quantity: Mapped[int] = mapped_column(Integer, nullable=False)
+
+
+    # active/inactive
+    is_recommended: Mapped[bool] = mapped_column(Boolean, default=True)
+
+    # currency-based pricing
+    price_inr: Mapped[float | None] = mapped_column(DECIMAL(10, 2), nullable=True)
+    price_usd: Mapped[float | None] = mapped_column(DECIMAL(10, 2), nullable=True)
+    
+    # Polar integration
+    polar_product_id: Mapped[str | None] = mapped_column(String, unique=True, nullable=True)
+
+
 
 class Message(Base):
     __tablename__ = "messages"
@@ -501,6 +876,7 @@ class Conversation(Base):
     deleted_at: Mapped[datetime.datetime | None] = mapped_column(
         DateTime(timezone=True), nullable=True
     )
+    mark_as_deleted: Mapped[bool] = mapped_column(Boolean, default=False,nullable=True)
 
     # Relationships
     user: Mapped["UserProfile"] = relationship(
@@ -861,3 +1237,4 @@ async def get_db_session_for_background() -> AsyncGenerator[AsyncSession, None]:
     tu.logger.warning("Using deprecated get_db_session_for_background - switch to get_background_session()")
     async with get_background_session() as session:
         yield session
+

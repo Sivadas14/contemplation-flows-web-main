@@ -1,0 +1,95 @@
+﻿import React, { useState } from 'react';
+import { Link, useNavigate } from 'react-router-dom';
+import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
+import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
+import { Mail, Smartphone } from "lucide-react";
+import { useAuth } from "@/contexts/AuthContext";
+
+const Register: React.FC = () => {
+  const { register, signInWithGoogle, verifyOtp, resendOtp } = useAuth();
+  const navigate = useNavigate();
+
+  const [step, setStep] = useState<'form' | 'otp'>('form');
+  const [name, setName] = useState("");
+  const [email, setEmail] = useState("");
+  const [phone, setPhone] = useState("");
+  const [password, setPassword] = useState("");
+  const [confirmPassword, setConfirmPassword] = useState("");
+  const [otp, setOtp] = useState("");
+  const [isLoading, setIsLoading] = useState(false);
+  const [error, setError] = useState("");
+  const [success, setSuccess] = useState("");
+
+  const handleSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    console.log('ðŸ”µ [Register Page] ========== FORM SUBMITTED ==========');
+    console.log('ðŸ”µ [Register Page] Form data:', { name, email, phone });
+    setError("");
+    setSuccess("");
+
+    // Validation
+    if (!name.trim()) {
+      console.log('âš ï¸ [Register Page] Validation failed: Name is empty');
+      setError("Please enter your name");
+      return;
+    }
+
+    if (!email.trim()) {
+      console.log('âš ï¸ [Register Page] Validation failed: Email is empty');
+      setError("Please enter your email");
+      return;
+    }
+
+    const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+    if (!emailRegex.test(email)) {
+      console.log('âš ï¸ [Register Page] Validation failed: Invalid email format');
+      setError("Please enter a valid email address");
+      return;
+    }
+
+    if (!phone.trim()) {
+      console.log('âš ï¸ [Register Page] Validation failed: Phone is empty');
+      setError("Please enter your phone number");
+      return;
+    }
+
+    if (!password) {
+      console.log('âš ï¸ [Register Page] Validation failed: Password is empty');
+      setError("Please enter a password");
+      return;
+    }
+
+    if (password.length < 6) {
+      console.log('âš ï¸ [Register Page] Validation failed: Password too short');
+      setError("Password must be at least 6 characters long");
+      return;
+    }
+
+
+    if (otp.length !== 8) {
+      setError("Please enter a 6-digit verification code");
+      return;
+    }
+
+    setIsLoading(true);
+
+    try {
+      console.log('ðŸ”µ [Register Page] Verifying OTP:', { email, otp });
+      const response = await verifyOtp(email, otp, 'signup');
+
+      console.log('ðŸ”µ [Register Page] OTP verification response:', response);
+
+      if (response.success) {
+        setSuccess("Email verified successfully! Redirecting...");
+        console.log('âœ… [Register Page] OTP verification successful!');
+
+        // Redirect after successful verification
+        setTimeout(() => {
+          navigate('/');
+        }, 2000);
+      } else {
+        console.log('âŒ [Register Page] OTP verification failed:', response.message);
+        setError(response.message || "Invalid verification code. Please try again.");
+      }

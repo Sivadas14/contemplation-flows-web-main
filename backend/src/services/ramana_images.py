@@ -3,8 +3,10 @@ Admin API for managing the Ramana Maharshi image repository.
 Images uploaded here are used for contemplation cards in place of AI-generated images.
 """
 
+import asyncio
 import uuid
 from io import BytesIO
+from functools import partial
 
 from fastapi import APIRouter, Depends, HTTPException, UploadFile, File, Form
 from sqlalchemy import select, func
@@ -84,10 +86,16 @@ async def upload_ramana_images(
             ext = file.filename.rsplit(".", 1)[-1].lower() if "." in file.filename else "jpg"
             storage_path = f"{STORAGE_FOLDER}/{uuid.uuid4()}.{ext}"
 
-            spb.storage.from_(BUCKET).upload(
-                storage_path,
-                file_bytes,
-                {"content-type": file.content_type},
+            # Run synchronous Supabase upload in thread pool to avoid blocking event loop
+            loop = asyncio.get_event_loop()
+            await loop.run_in_executor(
+                None,
+                partial(
+                    spb.storage.from_(BUCKET).upload,
+                    storage_path,
+                    file_bytes,
+                    {"content-type": file.content_type},
+                ),
             )
 
             img_record = RamanaImage(

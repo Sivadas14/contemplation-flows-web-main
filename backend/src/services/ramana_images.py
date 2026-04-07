@@ -3,13 +3,11 @@ Admin API for managing the Ramana Maharshi image repository.
 Images uploaded here are used for contemplation cards in place of AI-generated images.
 """
 
-import asyncio
 import uuid
 from io import BytesIO
-from functools import partial
 
 from fastapi import APIRouter, Depends, HTTPException, UploadFile, File, Form
-from sqlalchemy import select, func
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.db import get_db_session_fa, RamanaImage
@@ -20,6 +18,8 @@ router = APIRouter(prefix="/api/admin/ramana-images", tags=["admin"])
 ALLOWED_TYPES = {"image/jpeg", "image/jpg", "image/png", "image/webp"}
 STORAGE_FOLDER = "ramana-library"
 BUCKET = "generations"
+MAX_FILES_PER_BATCH = 10
+MAX_FILE_SIZE_MB = 10
 
 
 # ---------------------------------------------------------------------------
@@ -73,10 +73,15 @@ async def upload_ramana_images(
     settings = get_settings()
     spb = get_supabase_admin_client(settings)
 
+    # Guard: cap batch size to avoid request timeouts
+    if len(files) > MAX_FILES_PER_BATCH:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Upload at most {MAX_FILES_PER_BATCH} images at a time.",
+        )
+
     uploaded = []
     errors = []
-
-    loop = asyncio.get_event_loop()
 
     for file in files:
         if file.content_type not in ALLOWED_TYPES:
@@ -85,18 +90,20 @@ async def upload_ramana_images(
 
         try:
             file_bytes = await file.read()
+
+            # Guard: skip files that are too large
+            size_mb = len(file_bytes) / (1024 * 1024)
+            if size_mb > MAX_FILE_SIZE_MB:
+                errors.append(f"{file.filename}: too large ({size_mb:.1f} MB, max {MAX_FILE_SIZE_MB} MB)")
+                continue
+
             ext = file.filename.rsplit(".", 1)[-1].lower() if "." in file.filename else "jpg"
             storage_path = f"{STORAGE_FOLDER}/{uuid.uuid4()}.{ext}"
 
-            # Run synchronous Supabase upload in thread pool to avoid blocking event loop
-            await loop.run_in_executor(
-                None,
-                partial(
-                    spb.storage.from_(BUCKET).upload,
-                    storage_path,
-                    file_bytes,
-                    {"content-type": file.content_type},
-                ),
+            spb.storage.from_(BUCKET).upload(
+                storage_path,
+                file_bytes,
+                {"content-type": file.content_type},
             )
 
             img_record = RamanaImage(

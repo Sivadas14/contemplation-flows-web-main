@@ -76,6 +76,8 @@ async def upload_ramana_images(
     uploaded = []
     errors = []
 
+    loop = asyncio.get_event_loop()
+
     for file in files:
         if file.content_type not in ALLOWED_TYPES:
             errors.append(f"{file.filename}: unsupported type {file.content_type}")
@@ -87,7 +89,6 @@ async def upload_ramana_images(
             storage_path = f"{STORAGE_FOLDER}/{uuid.uuid4()}.{ext}"
 
             # Run synchronous Supabase upload in thread pool to avoid blocking event loop
-            loop = asyncio.get_event_loop()
             await loop.run_in_executor(
                 None,
                 partial(

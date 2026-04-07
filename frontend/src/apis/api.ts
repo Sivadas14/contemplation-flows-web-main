@@ -545,6 +545,39 @@ export const profileAPI = {
     },
 };
 
+export interface RamanaImageItem {
+    id: string;
+    filename: string;
+    description: string | null;
+    active: boolean;
+    storage_path: string;
+    preview_url: string;
+    created_at: string | null;
+}
+
+export const ramanaImagesAPI = {
+    list: async (): Promise<{ images: RamanaImageItem[]; total: number; active: number }> => {
+        const res = await apiClient.get('/admin/ramana-images');
+        return res.data;
+    },
+    upload: async (files: File[], description?: string): Promise<{ uploaded: { id: string; filename: string }[]; errors: string[] }> => {
+        const form = new FormData();
+        files.forEach(f => form.append('files', f));
+        if (description) form.append('description', description);
+        const res = await apiClient.post('/admin/ramana-images', form, {
+            headers: { 'Content-Type': 'multipart/form-data' },
+        });
+        return res.data;
+    },
+    toggle: async (id: string): Promise<{ id: string; active: boolean }> => {
+        const res = await apiClient.patch(`/admin/ramana-images/${id}/toggle`);
+        return res.data;
+    },
+    delete: async (id: string): Promise<void> => {
+        await apiClient.delete(`/admin/ramana-images/${id}`);
+    },
+};
+
 // Export all APIs
 export default {
     auth: authAPI,

@@ -26,6 +26,7 @@ from src.db import (
     MessageRole,
     SourceDocument,
     DocumentChunk,
+    RamanaImage,
 )
 from src.settings import get_llm, get_supabase_client, get_supabase_admin_client, get_settings
 from src.db import get_db_session, get_background_session
@@ -146,11 +147,17 @@ async def generate_contemplation_card_sync(
     if not conversation:
         raise ValueError(f"Conversation with id {conversation_id} not found")
 
-    # image gen
+    # IMAGE: try repository first; fall back to AI generation if empty
     logger.info(
         f"Generating contemplation card for conversation {conversation_id}/{message_id}"
     )
-    pil_image = await _generate_image(prompt)
+    repo_image = await _get_random_repository_image(session, spb_client)
+    if repo_image is not None:
+        pil_image = repo_image
+        logger.info("Using repository image for contemplation card")
+    else:
+        logger.info("Repository empty — falling back to AI image generation")
+        pil_image = await _generate_image(prompt)
 
     # add caption to the image
     with_caption = add_caption_to_image(pil_image, quote)
@@ -439,6 +446,38 @@ async def _generate_prompt_and_quote_from_question(
     image_prompt = await _generate_image_prompt_from_question(user_question)
     # Return a placeholder quote; callers should use _get_quote_from_citations_or_random
     return image_prompt, ""
+
+
+async def _get_random_repository_image(
+    session: AsyncSession,
+    spb_client: Client,
+) -> Image.Image | None:
+    """Pick a random active image from the Ramana image repository.
+
+    Downloads the image bytes from Supabase storage and returns a PIL Image.
+    Returns None if the repository is empty or all images are inactive,
+    signalling the caller to fall back to AI generation.
+    """
+    try:
+        query = (
+            select(RamanaImage)
+            .where(RamanaImage.active == True)
+            .order_by(func.random())
+            .limit(1)
+        )
+        result = await session.execute(query)
+        img_record = result.scalar_one_or_none()
+
+        if img_record is None:
+            return None
+
+        image_bytes = spb_client.storage.from_("generations").download(img_record.storage_path)
+        pil_image = Image.open(BytesIO(image_bytes)).convert("RGB")
+        logger.info(f"Loaded repository image: {img_record.filename} ({img_record.storage_path})")
+        return pil_image
+    except Exception as e:
+        logger.warning(f"Repository image load failed, will use AI generation: {e}")
+        return None
 
 
 async def _generate_image(prompt: str) -> Image.Image:

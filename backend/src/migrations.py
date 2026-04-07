@@ -70,6 +70,25 @@ async def _add_onboarding_seen_column(session: AsyncSession) -> None:
     print("[MIGRATION] onboarding_seen column verified/added.")
 
 
+async def _create_ramana_images_table(session: AsyncSession) -> None:
+    """
+    Idempotently create the ramana_images table.
+    Stores admin-uploaded Ramana / Tiruvannamalai images used for contemplation cards.
+    """
+    await session.execute(text("""
+        CREATE TABLE IF NOT EXISTS ramana_images (
+            id          UUID        PRIMARY KEY DEFAULT gen_random_uuid(),
+            created_at  TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+            filename    VARCHAR     NOT NULL,
+            storage_path VARCHAR    NOT NULL,
+            description VARCHAR,
+            active      BOOLEAN     NOT NULL DEFAULT TRUE
+        )
+    """))
+    await session.commit()
+    print("[MIGRATION] ramana_images table verified/created.")
+
+
 async def run_migrations(session_factory) -> None:
     """
     Entry point called from server lifespan.
@@ -85,3 +104,8 @@ async def run_migrations(session_factory) -> None:
             await _add_onboarding_seen_column(session)
         except Exception as e:
             print(f"[MIGRATION] ERROR in _add_onboarding_seen_column: {e}")
+
+        try:
+            await _create_ramana_images_table(session)
+        except Exception as e:
+            print(f"[MIGRATION] ERROR in _create_ramana_images_table: {e}")

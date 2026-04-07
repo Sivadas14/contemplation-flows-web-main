@@ -1068,6 +1068,21 @@ class ContentGeneration(Base):
         )
 
 
+class RamanaImage(Base):
+    """Repository of admin-uploaded Ramana Maharshi / Tiruvannamalai images.
+    When active images are present, they are used for contemplation cards
+    instead of AI-generated images.
+    """
+    __tablename__ = "ramana_images"
+
+    id: Mapped[pkey_uuid]
+    created_at: Mapped[default_timestamp]
+    filename: Mapped[str] = mapped_column(String, nullable=False)
+    storage_path: Mapped[str] = mapped_column(String, nullable=False)
+    description: Mapped[str | None] = mapped_column(String, nullable=True)
+    active: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False, server_default="true")
+
+
 # ============================================================================
 # 5. INDEXES
 # ============================================================================

@@ -3,6 +3,7 @@ import { useLocation, useNavigate, useParams } from "react-router-dom";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Pencil, Save, Volume2, Mic, ArrowRight, ArrowLeft, Image as ImageIcon, Music, Video, Download, Loader2, Sparkles, Brain, Timer, BookOpen, PlayIcon, MusicIcon } from "lucide-react";
+import { teachingTopics, personalTopics } from "@/data/chatTopics";
 import ChatMessage from "@/components/ChatMessage";
 import ExploreMore from "@/components/ExploreMore";
 import InlineMeditationCreator from "@/components/InlineMeditationCreator";
@@ -48,6 +49,7 @@ const Chat = () => {
   const [questions, setQuestions] = useState<string[]>([]);
   const [isLoadingConversation, setIsLoadingConversation] = useState(false);
   const [hasProcessedInitialQuery, setHasProcessedInitialQuery] = useState(false);
+  const [topicTab, setTopicTab] = useState<"teachings" | "personal">("teachings");
 
   // Inline image generation states
   const [generatingImageForMessage, setGeneratingImageForMessage] = useState<string | null>(null);
@@ -1032,38 +1034,52 @@ const Chat = () => {
       <div className="flex-1 p-4 md:p-6 max-w-[816px] mx-auto w-full">
 
         {!isLoadingConversation && messages.length === 0 && (
-          <div className="flex flex-col items-center justify-center min-h-[60vh] md:h-full max-w-2xl mx-auto text-center px-4 py-10 md:py-0">
-            <h1 className="text-3xl md:text-5xl font-heading text-brand-heading mb-4 md:mb-6 font-bold text-gray-800">
-              Mindful AI
+          <div className="flex flex-col items-center w-full max-w-2xl mx-auto px-4 pt-8 pb-4">
+            {/* Heading */}
+            <h1 className="text-3xl md:text-4xl font-heading font-bold text-gray-800 mb-1 text-center">
+              Arunachala Samudra
             </h1>
-            <p className="text-gray-600 mb-6 md:mb-8 max-w-sm md:max-w-md text-base md:text-lg px-2">
-              How can I help you today?
+            <p className="text-gray-500 mb-6 text-sm md:text-base text-center">
+              Ask anything about Ramana Maharshi's teachings, or choose a topic below
             </p>
 
-            {/* Quick Start Questions */}
-            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 md:gap-4 w-full max-w-2xl mb-8 px-2 md:px-4">
-              {[
-                { text: "How do I start a meditation practice?", icon: Sparkles },
-                { text: "What are mindfulness techniques for stress?", icon: Brain },
-                { text: "Create a 5-minute breathing meditation", icon: Timer },
-                { text: "Explain the benefits of daily reflection", icon: BookOpen }
-              ].map((item, index) => (
+            {/* Tabs + chips */}
+            <div className="w-full">
+              <div className="flex border-b border-gray-200 mb-4">
                 <button
-                  key={index}
-                  className="flex items-center gap-3 md:gap-4 p-3 md:p-4 text-left bg-white border border-gray-100 rounded-xl md:rounded-2xl hover:border-brand-button hover:shadow-md transition-all duration-200 group"
-                  onClick={() => {
-                    setCurrentInput(item.text);
-                    inputRef.current?.focus();
-                  }}
+                  onClick={() => setTopicTab("teachings")}
+                  className={`px-4 py-2 text-sm font-medium border-b-2 transition-colors ${
+                    topicTab === "teachings"
+                      ? "border-orange-500 text-orange-600"
+                      : "border-transparent text-gray-500 hover:text-gray-700"
+                  }`}
                 >
-                  <div className="w-8 h-8 md:w-10 md:h-10 rounded-full bg-orange-50 flex items-center justify-center text-brand-button group-hover:scale-110 transition-transform duration-200 shrink-0">
-                    <item.icon className="w-4 h-4 md:w-5 md:h-5" />
-                  </div>
-                  <span className="text-sm font-medium text-gray-700 group-hover:text-gray-900 leading-snug">
-                    {item.text}
-                  </span>
+                  Ramana's Teachings
                 </button>
-              ))}
+                <button
+                  onClick={() => setTopicTab("personal")}
+                  className={`px-4 py-2 text-sm font-medium border-b-2 transition-colors ${
+                    topicTab === "personal"
+                      ? "border-orange-500 text-orange-600"
+                      : "border-transparent text-gray-500 hover:text-gray-700"
+                  }`}
+                >
+                  What I'm Facing
+                </button>
+              </div>
+
+              {/* Topic chips */}
+              <div className="flex flex-wrap gap-2">
+                {(topicTab === "teachings" ? teachingTopics : personalTopics).map((topic, i) => (
+                  <button
+                    key={i}
+                    onClick={() => handleSendMessage(topic.question)}
+                    className="px-3 py-1.5 text-sm rounded-full border border-orange-200 bg-orange-50 text-orange-800 hover:bg-orange-100 hover:border-orange-400 hover:shadow-sm transition-all duration-150"
+                  >
+                    {topic.label}
+                  </button>
+                ))}
+              </div>
             </div>
           </div>
         )}

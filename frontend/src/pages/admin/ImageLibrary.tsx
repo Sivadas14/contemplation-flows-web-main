@@ -33,10 +33,16 @@ export default function ImageLibrary() {
 
     useEffect(() => { loadImages(); }, []);
 
+    const MAX_BATCH = 10;
+
     const handleFiles = async (files: File[]) => {
         if (!files.length) return;
         const allowed = files.filter(f => f.type.startsWith("image/"));
         if (!allowed.length) { showToast("error", "Only image files are supported (JPG, PNG, WebP)"); return; }
+        if (allowed.length > MAX_BATCH) {
+            showToast("error", `Max ${MAX_BATCH} images per upload. Please select fewer files.`);
+            return;
+        }
         setUploading(true);
         try {
             const result = await ramanaImagesAPI.upload(allowed, description);
@@ -44,8 +50,9 @@ export default function ImageLibrary() {
             if (result.errors.length) showToast("error", result.errors[0]);
             setDescription("");
             await loadImages();
-        } catch {
-            showToast("error", "Upload failed");
+        } catch (err: any) {
+            const msg = err?.response?.data?.detail || "Upload failed — please try again";
+            showToast("error", msg);
         } finally {
             setUploading(false);
         }
@@ -126,7 +133,7 @@ export default function ImageLibrary() {
                     <p className="text-sm text-gray-600 font-medium">
                         {uploading ? "Uploading…" : "Click or drag & drop images here"}
                     </p>
-                    <p className="text-xs text-gray-400 mt-1">JPG, PNG, WebP · Multiple files supported</p>
+                    <p className="text-xs text-gray-400 mt-1">JPG, PNG, WebP · Up to 10 images at a time · Max 10 MB each</p>
                     <input
                         ref={fileInputRef}
                         type="file"

@@ -1,3 +1,4 @@
+import re
 import tempfile
 import os
 import subprocess
@@ -41,6 +42,13 @@ def _get_cache_key(source_text: str, length: str = None) -> str:
 
 def _remove_transcript_artifacts(text: str) -> str:
     """Remove common transcript artifacts that TTS shouldn't read verbatim"""
+    # Strip section headers with percentages leaked from the prompt structure,
+    # e.g. "Introduction & Settling In (20%):", "Deep Visualization/Focus (60%):",
+    # "Integration & Closing (20%):" and any loose "(XX%)" tokens.
+    text = re.sub(r'[A-Za-z &/]+\(\d+%\)\s*:?\s*', '', text)
+    text = re.sub(r'\(\d+%\)\s*:?\s*', '', text)
+    # Strip markdown-style section headers (e.g. "### Introduction")
+    text = re.sub(r'#{1,3}\s*[A-Za-z &/]+\n?', '', text)
     # Punctuation names
     text = text.replace('dot dot', '').replace('dot dot dot', '').replace('dots', '')
     text = text.replace('hyphen', '').replace('dash', '').replace('minus', '')
@@ -95,18 +103,19 @@ async def generate_meditation_transcript_optimized(source_text: str, length: str
         Expanded Sequence: "Now, gently shift your entire awareness to the rhythm of your breath. [pause] Feel the cool air as it touches the tip of your nose, entering slowly, filling your lungs with a soft, golden light. [breathing] Notice how your chest rises, like a gentle wave on a calm ocean, and how it falls, releasing any weight you've been carrying. With every inhale, you are breathing in pure, mountain air. With every exhale, you are letting go of the world outside. [pause] Settle into this quiet space within you... the space where peace is not a goal, but your natural state. [pause]"
         
         ### YOUR TASK:
-        1. STRUCTURE:
-           - Introduction & Settling In (20%): Set the scene, prepare the body.
-           - Deep Visualization/Focus (60%): Expand every concept in the source text into sensory details (sights, sounds, feelings) like the example above.
-           - Integration & Closing (20%): Bring awareness back slowly.
-        
+        1. STRUCTURE (use these as internal guidance only — do NOT write these labels in the script):
+           - Opening (first 20%): Set the scene, prepare the body.
+           - Core (middle 60%): Expand every concept in the source text into sensory details (sights, sounds, feelings) like the example above.
+           - Closing (final 20%): Bring awareness back slowly.
+
         2. CRITICAL REQUIREMENTS:
-           - TARGET LENGTH: You MUST reach at least {target_words} words. 
+           - TARGET LENGTH: You MUST reach at least {target_words} words.
            - TECHNIQUE: Use the expansion technique shown in the example. Do not summarize. Elaborate.
            - TONE: Calm, soothing, repetitive, and peaceful.
            - FORMAT: Include [pause] and [breathing] tags frequently.
-        
-        Generate only the meditation script.
+           - OUTPUT: Pure meditation script only. No section titles, no headers, no percentage labels, no structural markers of any kind.
+
+        Generate only the meditation script text, starting directly with the spoken words.
         """
     )
 

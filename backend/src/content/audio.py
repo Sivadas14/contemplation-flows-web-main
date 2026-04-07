@@ -203,9 +203,9 @@ async def generate_audio_from_transcript_optimized(transcript: str) -> bytes:
             continue
         audio_chunk = await model.text_to_speech_async(
             prompt=chunk,
-            voice="shimmer",
+            voice="alloy",
             model="gpt-4o-mini-tts",
-            instructions="Speak in a calm, soothing voice with natural pacing. Maintain consistent tone.",
+            instructions="Speak in a calm, neutral voice with natural pacing. Maintain consistent tone.",
         )
         audio_chunks.append(audio_chunk)
 
@@ -586,8 +586,8 @@ async def generate_audio_from_transcript(transcript: str) -> bytes:
 
     audio_bytes = await model.text_to_speech_async(
         prompt=cleaned_transcript,
-        voice="shimmer",
-                model="gpt-4o-mini-tts",
+        voice="alloy",
+        model="gpt-4o-mini-tts",
 
         instructions="""
         For sound effects transcript has tags like [breathing], [pause], [silence], etc.

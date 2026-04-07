@@ -497,9 +497,9 @@ async def _generate_image(prompt: str) -> Image.Image:
 def add_caption_to_image(
     image: Image.Image,
     caption_text: str,
-    font_size=40,
-    padding=20,
-    max_width_ratio=0.9,
+    font_size=68,
+    padding=36,
+    max_width_ratio=0.88,
 ):
     """
     Add a caption below a PIL image with white background.
@@ -566,9 +566,9 @@ def add_caption_to_image(
     if current_line:
         wrapped_lines.append(current_line)
 
-    # Limit to 2 lines as requested
-    if len(wrapped_lines) > 2:
-        wrapped_lines = wrapped_lines[:2]
+    # Limit to 3 lines
+    if len(wrapped_lines) > 3:
+        wrapped_lines = wrapped_lines[:3]
         # Add ellipsis to the second line if text was truncated
         last_line = wrapped_lines[1]
         while True:
@@ -585,7 +585,7 @@ def add_caption_to_image(
             last_line = " ".join(words_in_line[:-1])
 
     # Calculate text dimensions
-    line_height = font_size + 4  # Add some line spacing
+    line_height = font_size + 14  # Add generous line spacing for readability
     total_text_height = len(wrapped_lines) * line_height
 
     # Calculate caption area height

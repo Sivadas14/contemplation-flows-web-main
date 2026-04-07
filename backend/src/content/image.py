@@ -497,8 +497,8 @@ async def _generate_image(prompt: str) -> Image.Image:
 def add_caption_to_image(
     image: Image.Image,
     caption_text: str,
-    font_size=68,
-    padding=36,
+    font_size=204,
+    padding=48,
     max_width_ratio=0.88,
 ):
     """

@@ -146,6 +146,15 @@ export const PlansModal: React.FC<PlansModalProps> = ({ isOpen, onClose, onSucce
     const { data: fetchedPlans, isLoading: plansLoading } = usePlansQuery();
 
     const [billingCycle, setBillingCycle] = useState<'MONTHLY' | 'YEARLY'>('MONTHLY');
+    // Currency state — initialised from localStorage/timezone, updates instantly on toggle
+    const [indiaUser, setIndiaUser] = useState<boolean>(() =>
+        isIndianUser(userProfile?.country_code, userProfile?.phone_number)
+    );
+
+    const handleCurrencyToggle = (currency: 'USD' | 'INR') => {
+        setCurrencyOverride(currency);
+        setIndiaUser(currency === 'INR');
+    };
 
     // Filter active plans from the cached data
     const plans = (fetchedPlans || []).filter((plan: LocalPlan) => plan.active);
@@ -395,8 +404,6 @@ export const PlansModal: React.FC<PlansModalProps> = ({ isOpen, onClose, onSucce
     const currentPlanDetails = getCurrentPlanDetails();
     const { freePlan, paidPlans } = getFilteredPlans();
 
-    // India detection — checks localStorage override first, then browser timezone/locale
-    const indiaUser = isIndianUser(userProfile?.country_code, userProfile?.phone_number);
     const currencySymbol = indiaUser ? '₹' : '$';
 
     if (!isOpen) return null;
@@ -448,14 +455,14 @@ export const PlansModal: React.FC<PlansModalProps> = ({ isOpen, onClose, onSucce
                                 <div className="flex items-center gap-3 bg-white border-2 border-[#ECE5DF] rounded-2xl px-5 py-3 shadow-sm">
                                     <button
                                         type="button"
-                                        onClick={() => { setCurrencyOverride('USD'); window.location.reload(); }}
+                                        onClick={() => handleCurrencyToggle('USD')}
                                         className={`px-5 py-2 rounded-xl text-sm font-bold transition-all duration-200 ${!indiaUser ? 'bg-[#472b20] text-white shadow' : 'text-[#472b20]/60 hover:bg-[#ECE5DF]'}`}
                                     >
                                         $ USD
                                     </button>
                                     <button
                                         type="button"
-                                        onClick={() => { setCurrencyOverride('INR'); window.location.reload(); }}
+                                        onClick={() => handleCurrencyToggle('INR')}
                                         className={`px-5 py-2 rounded-xl text-sm font-bold transition-all duration-200 ${indiaUser ? 'bg-[#472b20] text-white shadow' : 'text-[#472b20]/60 hover:bg-[#ECE5DF]'}`}
                                     >
                                         ₹ INR

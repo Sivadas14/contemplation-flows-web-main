@@ -297,8 +297,14 @@ export const SubscriptionScreen: React.FC = () => {
     const { freePlan, paidPlans } = getFilteredPlans();
     const currentPlanId = currentPlanDetails?.id;
 
-    // Detect Indian users by country code or phone number prefix
-    const indiaUser = isIndianUser(userProfile?.country_code, userProfile?.phone_number);
+    // Currency state — initialised from localStorage/timezone, updates instantly on toggle
+    const [indiaUser, setIndiaUser] = useState<boolean>(() =>
+        isIndianUser(userProfile?.country_code, userProfile?.phone_number)
+    );
+    const handleCurrencyToggle = (currency: 'USD' | 'INR') => {
+        setCurrencyOverride(currency);
+        setIndiaUser(currency === 'INR');
+    };
     const currencySymbol = indiaUser ? '₹' : '$';
 
     // Helper to get price for current currency
@@ -829,14 +835,14 @@ export const SubscriptionScreen: React.FC = () => {
                                 <div className="flex items-center gap-3 bg-white border-2 border-[#ECE5DF] rounded-2xl px-5 py-3 shadow-sm">
                                     <button
                                         type="button"
-                                        onClick={() => { setCurrencyOverride('USD'); window.location.reload(); }}
+                                        onClick={() => handleCurrencyToggle('USD')}
                                         className={`px-5 py-2 rounded-xl text-sm font-bold transition-all duration-200 ${!indiaUser ? 'bg-[#472b20] text-white shadow' : 'text-[#472b20]/60 hover:bg-[#ECE5DF]'}`}
                                     >
                                         $ USD
                                     </button>
                                     <button
                                         type="button"
-                                        onClick={() => { setCurrencyOverride('INR'); window.location.reload(); }}
+                                        onClick={() => handleCurrencyToggle('INR')}
                                         className={`px-5 py-2 rounded-xl text-sm font-bold transition-all duration-200 ${indiaUser ? 'bg-[#472b20] text-white shadow' : 'text-[#472b20]/60 hover:bg-[#ECE5DF]'}`}
                                     >
                                         ₹ INR

@@ -1895,7 +1895,7 @@ async def create_razorpay_checkout(
     # This guarantees any failure returns 400 with a real error message instead of a raw 500.
     try:
         from src.razorpayservice.razorpay_client import is_razorpay_enabled
-        from src.razorpayservice.razorpay_service import create_razorpay_subscription
+        from src.razorpayservice.razorpay_service import create_razorpay_subscription, create_razorpay_plan
         from fastapi.concurrency import run_in_threadpool
 
         if not is_razorpay_enabled():
@@ -1906,11 +1906,28 @@ async def create_razorpay_checkout(
         plan = plan_result.scalar_one_or_none()
         if not plan:
             raise HTTPException(status_code=404, detail="Plan not found")
+
+        # SELF-HEAL: if razorpay_plan_id is missing (because the startup migration
+        # failed in an earlier broken container before razorpay was installed),
+        # create the Razorpay plan on the fly and save it to the DB. The next user
+        # to hit this endpoint for the same plan will reuse the saved ID.
         if not plan.razorpay_plan_id:
-            raise HTTPException(
-                status_code=400,
-                detail="This plan does not have a Razorpay plan configured. Please contact support."
-            )
+            logger.info(f"Auto-creating Razorpay plan for {plan.name} (id={plan.id})")
+            try:
+                rzp_plan_id = await run_in_threadpool(
+                    create_razorpay_plan, plan.plan_type, plan.billing_cycle
+                )
+                plan.razorpay_plan_id = rzp_plan_id
+                session.add(plan)
+                await session.commit()
+                logger.info(f"Auto-created Razorpay plan for {plan.name}: {rzp_plan_id}")
+            except Exception as create_err:
+                logger.error(f"Auto-create Razorpay plan failed for {plan.name}: {create_err}")
+                traceback.print_exc()
+                raise HTTPException(
+                    status_code=400,
+                    detail=f"Could not create Razorpay plan: {type(create_err).__name__}: {create_err}"
+                )
 
         # Load user
         user_result = await session.execute(

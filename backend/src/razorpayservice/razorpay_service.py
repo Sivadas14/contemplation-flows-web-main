@@ -37,7 +37,7 @@ logger = logging.getLogger(__name__)
 INR_PLAN_CONFIG = {
     (PlanType.BASIC, BillingCycle.MONTHLY): {
         "name": "Seeker Monthly",
-        "description": "Daily practice — audio & video meditation",
+        "description": "Daily practice - audio and video meditation",
         "period": "monthly",
         "interval": 1,
         "amount": 29900,   # ₹299 in paise
@@ -46,7 +46,7 @@ INR_PLAN_CONFIG = {
     },
     (PlanType.BASIC, BillingCycle.YEARLY): {
         "name": "Seeker Yearly",
-        "description": "Daily practice — audio & video, save 33%",
+        "description": "Daily practice - audio and video, save 33 percent",
         "period": "yearly",
         "interval": 1,
         "amount": 269900,  # ₹2,699 in paise
@@ -55,7 +55,7 @@ INR_PLAN_CONFIG = {
     },
     (PlanType.PRO, BillingCycle.MONTHLY): {
         "name": "Devotee Monthly",
-        "description": "Unlimited practice — full audio & video access",
+        "description": "Unlimited practice - full audio and video access",
         "period": "monthly",
         "interval": 1,
         "amount": 69900,   # ₹699 in paise
@@ -64,7 +64,7 @@ INR_PLAN_CONFIG = {
     },
     (PlanType.PRO, BillingCycle.YEARLY): {
         "name": "Devotee Yearly",
-        "description": "Unlimited practice, save 33%",
+        "description": "Unlimited practice, save 33 percent",
         "period": "yearly",
         "interval": 1,
         "amount": 539900,  # ₹5,399 in paise

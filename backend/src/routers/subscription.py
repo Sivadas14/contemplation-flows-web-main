@@ -1950,6 +1950,7 @@ async def create_razorpay_checkout(
             str(user.id),
             user.email_id,
             total_count,
+            success_url,   # callback_url — Razorpay redirects here after payment
         )
     except ValueError as exc:
         # Credential or config problem — clear message for operator

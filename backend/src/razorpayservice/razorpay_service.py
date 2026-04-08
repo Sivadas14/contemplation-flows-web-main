@@ -164,17 +164,19 @@ class RazorpayService:
         user_id: str,
         user_email: str,
         total_count: int,
+        callback_url: str | None = None,
     ) -> dict:
         """
         Create a Razorpay Subscription and return:
             {"subscription_id": "sub_xxx", "short_url": "https://rzp.io/..."}
 
         short_url is the hosted Razorpay checkout page — redirect the user there.
+        callback_url: where Razorpay redirects the user after a successful payment.
         Synchronous — wrap in run_in_threadpool when calling from an async endpoint.
         """
         client = get_razorpay_client()
 
-        data = {
+        data: dict = {
             "plan_id": razorpay_plan_id,
             "total_count": total_count,
             "quantity": 1,
@@ -184,6 +186,8 @@ class RazorpayService:
                 "user_email": user_email,
             },
         }
+        if callback_url:
+            data["callback_url"] = callback_url
 
         result = client.subscription.create(data=data)
         sub_id    = result.get("id")

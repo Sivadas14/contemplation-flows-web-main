@@ -1890,77 +1890,89 @@ async def create_razorpay_checkout(
     """
     Create a Razorpay subscription checkout for Indian users.
     Returns {"checkout_url": "https://rzp.io/..."} — redirect the user there.
+
+    Pre-conditions (enforced by startup migration):
+      - Plan must exist in DB with razorpay_plan_id populated.
+      - ASAM_RAZORPAY_KEY_ID and ASAM_RAZORPAY_KEY_SECRET must be valid ASCII.
     """
-    # EVERYTHING inside one try-except — imports, config check, DB queries, Razorpay API call.
-    # This guarantees any failure returns 400 with a real error message instead of a raw 500.
-    try:
-        from src.razorpayservice.razorpay_client import is_razorpay_enabled
-        from src.razorpayservice.razorpay_service import create_razorpay_subscription, create_razorpay_plan
-        from fastapi.concurrency import run_in_threadpool
+    from src.razorpayservice.razorpay_client import is_razorpay_enabled
+    from src.razorpayservice.razorpay_service import RazorpayService, INR_PLAN_CONFIG
 
-        if not is_razorpay_enabled():
-            raise HTTPException(status_code=503, detail="Razorpay is not configured on this server.")
-
-        # Load plan
-        plan_result = await session.execute(select(Plan).where(Plan.id == plan_id))
-        plan = plan_result.scalar_one_or_none()
-        if not plan:
-            raise HTTPException(status_code=404, detail="Plan not found")
-
-        # SELF-HEAL: if razorpay_plan_id is missing (because the startup migration
-        # failed in an earlier broken container before razorpay was installed),
-        # create the Razorpay plan on the fly and save it to the DB. The next user
-        # to hit this endpoint for the same plan will reuse the saved ID.
-        if not plan.razorpay_plan_id:
-            logger.info(f"Auto-creating Razorpay plan for {plan.name} (id={plan.id})")
-            try:
-                rzp_plan_id = await run_in_threadpool(
-                    create_razorpay_plan, plan.plan_type, plan.billing_cycle
-                )
-                plan.razorpay_plan_id = rzp_plan_id
-                session.add(plan)
-                await session.commit()
-                logger.info(f"Auto-created Razorpay plan for {plan.name}: {rzp_plan_id}")
-            except Exception as create_err:
-                logger.error(f"Auto-create Razorpay plan failed for {plan.name}: {create_err}")
-                traceback.print_exc()
-                raise HTTPException(
-                    status_code=400,
-                    detail=f"Could not create Razorpay plan: {type(create_err).__name__}: {create_err}"
-                )
-
-        # Load user
-        user_result = await session.execute(
-            select(UserProfile).where(UserProfile.id == user_id)
+    # 1. Gateway availability check
+    if not is_razorpay_enabled():
+        raise HTTPException(
+            status_code=503,
+            detail="INR payment gateway is not available. Please contact support.",
         )
-        user = user_result.scalar_one_or_none()
-        if not user:
-            raise HTTPException(status_code=404, detail="User not found")
-        if not user.email_id:
-            raise HTTPException(status_code=400, detail="User email not found")
 
-        settings = get_settings()
-        success_url = redirect_url or f"{settings.frontend_url}/subscription?upgrade=success"
+    # 2. Load and validate plan
+    plan = (await session.execute(select(Plan).where(Plan.id == plan_id))).scalar_one_or_none()
+    if not plan:
+        raise HTTPException(status_code=404, detail="Plan not found.")
 
+    if not plan.razorpay_plan_id:
+        logger.error(
+            "[RAZORPAY] Plan '%s' (id=%d) has no razorpay_plan_id — "
+            "startup migration may have failed. Check ASAM_RAZORPAY_KEY_ID credential.",
+            plan.name, plan_id,
+        )
+        raise HTTPException(
+            status_code=503,
+            detail=(
+                "INR billing is not yet configured for this plan. "
+                "Please contact support — this is a one-time setup issue."
+            ),
+        )
+
+    cfg_key = (plan.plan_type, plan.billing_cycle)
+    if cfg_key not in INR_PLAN_CONFIG:
+        raise HTTPException(status_code=400, detail="Plan type not supported for INR billing.")
+
+    # 3. Load and validate user
+    user = (await session.execute(
+        select(UserProfile).where(UserProfile.id == user_id)
+    )).scalar_one_or_none()
+    if not user:
+        raise HTTPException(status_code=404, detail="User not found.")
+    if not user.email_id:
+        raise HTTPException(status_code=400, detail="Account is missing an email address.")
+
+    # 4. Build checkout
+    settings = get_settings()
+    success_url = redirect_url or f"{settings.frontend_url}/subscription?upgrade=success"
+    total_count = INR_PLAN_CONFIG[cfg_key]["total_count"]
+
+    try:
+        svc = RazorpayService()
         result = await run_in_threadpool(
-            create_razorpay_subscription,
+            svc.create_subscription,
             plan.razorpay_plan_id,
             str(user.id),
             user.email_id,
-            plan.plan_type,
-            plan.billing_cycle,
-            success_url,
+            total_count,
         )
-        return SuccessResponse(
-            message="Razorpay checkout created",
-            data={"checkout_url": result["short_url"]}
+    except ValueError as exc:
+        # Credential or config problem — clear message for operator
+        logger.error("[RAZORPAY] Credential/config error in checkout: %s", exc)
+        raise HTTPException(
+            status_code=503,
+            detail=f"Payment gateway configuration error: {exc}",
         )
-    except HTTPException:
-        raise  # re-raise 404/400/503 as-is without wrapping
-    except Exception as e:
-        logger.error(f"Razorpay checkout FULL ERROR: {type(e).__name__}: {e}")
-        traceback.print_exc()
-        raise HTTPException(status_code=400, detail=f"{type(e).__name__}: {e}")
+    except Exception as exc:
+        logger.error("[RAZORPAY] Checkout error: %s", exc, exc_info=True)
+        raise HTTPException(
+            status_code=502,
+            detail="Payment gateway returned an error. Please try again in a moment.",
+        )
+
+    logger.info(
+        "[RAZORPAY] Checkout created: plan=%s subscription=%s user=%s",
+        plan.name, result["subscription_id"], user_id,
+    )
+    return SuccessResponse(
+        message="Razorpay checkout created",
+        data={"checkout_url": result["short_url"]},
+    )
 
 
 @router.post("/razorpay-webhook")
@@ -1970,43 +1982,38 @@ async def razorpay_webhook(
 ):
     """
     Receive and verify Razorpay webhook events.
-    Handles subscription.activated, subscription.charged, subscription.cancelled.
+    Handles: subscription.activated, subscription.charged,
+             subscription.cancelled, subscription.completed.
     """
-    from src.razorpayservice.razorpay_service import (
-        verify_razorpay_webhook_signature,
-        handle_razorpay_webhook_event,
-    )
+    from src.razorpayservice.razorpay_service import RazorpayService
 
-    body = await request.body()
+    body      = await request.body()
     signature = request.headers.get("X-Razorpay-Signature", "")
 
-    print(f"🔔 Razorpay webhook received, event signature present: {bool(signature)}")
+    svc = RazorpayService()
 
-    # Verify signature
-    if not verify_razorpay_webhook_signature(body, signature):
-        print("❌ Razorpay webhook signature verification failed")
+    if not svc.verify_webhook_signature(body, signature):
+        logger.warning("[RAZORPAY] Webhook signature verification failed")
         raise HTTPException(status_code=400, detail="Invalid webhook signature")
 
     try:
         payload = json.loads(body)
-    except Exception as e:
-        print(f"❌ Failed to parse Razorpay webhook JSON: {e}")
+    except Exception as exc:
+        logger.error("[RAZORPAY] Could not parse webhook JSON: %s", exc)
         return {"status": "invalid_json"}
 
-    event = payload.get("event", "")
+    event         = payload.get("event", "")
     event_payload = payload.get("payload", {})
 
-    print(f"📌 Razorpay Event: {event}")
-    print(f"📦 Payload keys: {list(event_payload.keys())}")
+    logger.info("[RAZORPAY] Webhook received: event=%s", event)
 
     try:
-        status = await handle_razorpay_webhook_event(session, event, event_payload)
-        print(f"✅ Razorpay webhook handled: {status}")
+        status = await svc.handle_event(session, event, event_payload)
+        logger.info("[RAZORPAY] Webhook handled: event=%s status=%s", event, status)
         return {"status": status}
-    except Exception as e:
-        print(f"❌ Razorpay webhook handler error: {e}")
-        traceback.print_exc()
-        return {"status": "handler_error", "error": str(e)}
+    except Exception as exc:
+        logger.error("[RAZORPAY] Webhook handler error: %s", exc, exc_info=True)
+        return {"status": "handler_error", "error": str(exc)}
 
 
 

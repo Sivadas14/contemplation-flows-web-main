@@ -343,10 +343,15 @@ export const PlansModal: React.FC<PlansModalProps> = ({ isOpen, onClose, onSucce
             console.error("Subscription error:", error);
             if (error.response?.status === 401) {
                 toast.error("Please log in to continue");
-            } else if (error.response?.status === 400) {
-                toast.error(error.response.data?.message || "Invalid request");
+            } else if (error.response?.status === 400 || error.response?.status === 503) {
+                // FastAPI returns errors as {detail: "..."} — show the real message
+                const detail = error.response.data?.detail || error.response.data?.message || "Invalid request";
+                toast.error(detail);
             } else {
-                toast.error("Failed to process subscription request");
+                // Show HTTP status + raw detail for unexpected errors so we can debug
+                const status = error.response?.status || 'Network';
+                const detail = error.response?.data?.detail || error.response?.data?.message || error.message || "Unknown error";
+                toast.error(`Error ${status}: ${detail}`);
             }
         } finally {
             setIsProcessing(false);

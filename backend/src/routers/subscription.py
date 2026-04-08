@@ -1891,15 +1891,17 @@ async def create_razorpay_checkout(
     Create a Razorpay subscription checkout for Indian users.
     Returns {"checkout_url": "https://rzp.io/..."} — redirect the user there.
     """
-    from src.razorpayservice.razorpay_client import is_razorpay_enabled
-    from src.razorpayservice.razorpay_service import create_razorpay_subscription
-    from fastapi.concurrency import run_in_threadpool
-
-    if not is_razorpay_enabled():
-        raise HTTPException(status_code=503, detail="Razorpay is not configured on this server.")
-
+    # EVERYTHING inside one try-except — imports, config check, DB queries, Razorpay API call.
+    # This guarantees any failure returns 400 with a real error message instead of a raw 500.
     try:
-        # Load plan — inside try so any DB error returns 400 with real message instead of 500
+        from src.razorpayservice.razorpay_client import is_razorpay_enabled
+        from src.razorpayservice.razorpay_service import create_razorpay_subscription
+        from fastapi.concurrency import run_in_threadpool
+
+        if not is_razorpay_enabled():
+            raise HTTPException(status_code=503, detail="Razorpay is not configured on this server.")
+
+        # Load plan
         plan_result = await session.execute(select(Plan).where(Plan.id == plan_id))
         plan = plan_result.scalar_one_or_none()
         if not plan:
@@ -1939,9 +1941,9 @@ async def create_razorpay_checkout(
     except HTTPException:
         raise  # re-raise 404/400/503 as-is without wrapping
     except Exception as e:
-        logger.error(f"Razorpay checkout error: {e}")
+        logger.error(f"Razorpay checkout FULL ERROR: {type(e).__name__}: {e}")
         traceback.print_exc()
-        raise HTTPException(status_code=400, detail=str(e))
+        raise HTTPException(status_code=400, detail=f"{type(e).__name__}: {e}")
 
 
 @router.post("/razorpay-webhook")

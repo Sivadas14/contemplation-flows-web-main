@@ -285,43 +285,40 @@ async def _create_razorpay_plans(session: AsyncSession) -> None:
     print("[MIGRATION] Razorpay plans verified/created.")
 
 
+async def _safe_migration(session: AsyncSession, name: str, func) -> None:
+    """
+    Run a migration and roll back the session on failure.
+    Without rollback, a failed query leaves the PG transaction in an
+    aborted state, causing every subsequent migration to fail too.
+    """
+    try:
+        await func(session)
+    except Exception as e:
+        print(f"[MIGRATION] ERROR in {name}: {e}")
+        try:
+            await session.rollback()
+        except Exception as re:
+            print(f"[MIGRATION] Rollback also failed for {name}: {re}")
+
+
 async def run_migrations(session_factory) -> None:
     """
     Entry point called from server lifespan.
     Runs all migrations in sequence; errors are logged but do NOT crash startup.
+
+    IMPORTANT: schema-changing migrations (ALTER/CREATE) MUST run before any
+    migration that issues ORM SELECTs against those tables, because the
+    SQLAlchemy models reference the new columns and the SELECT will fail
+    if the column does not yet exist in the DB.
     """
     async with session_factory() as session:
-        try:
-            await _set_free_plan_limits(session)
-        except Exception as e:
-            print(f"[MIGRATION] ERROR in _set_free_plan_limits: {e}")
+        # ── Schema migrations first (ALTER / CREATE) ────────────────────────
+        await _safe_migration(session, "_add_onboarding_seen_column", _add_onboarding_seen_column)
+        await _safe_migration(session, "_create_ramana_images_table", _create_ramana_images_table)
+        await _safe_migration(session, "_add_razorpay_columns", _add_razorpay_columns)
 
-        try:
-            await _update_paid_plan_limits(session)
-        except Exception as e:
-            print(f"[MIGRATION] ERROR in _update_paid_plan_limits: {e}")
-
-        try:
-            await _update_polar_plan_prices(session)
-        except Exception as e:
-            print(f"[MIGRATION] ERROR in _update_polar_plan_prices: {e}")
-
-        try:
-            await _add_onboarding_seen_column(session)
-        except Exception as e:
-            print(f"[MIGRATION] ERROR in _add_onboarding_seen_column: {e}")
-
-        try:
-            await _create_ramana_images_table(session)
-        except Exception as e:
-            print(f"[MIGRATION] ERROR in _create_ramana_images_table: {e}")
-
-        try:
-            await _add_razorpay_columns(session)
-        except Exception as e:
-            print(f"[MIGRATION] ERROR in _add_razorpay_columns: {e}")
-
-        try:
-            await _create_razorpay_plans(session)
-        except Exception as e:
-            print(f"[MIGRATION] ERROR in _create_razorpay_plans: {e}")
+        # ── Data migrations (depend on schema being up to date) ─────────────
+        await _safe_migration(session, "_set_free_plan_limits", _set_free_plan_limits)
+        await _safe_migration(session, "_update_paid_plan_limits", _update_paid_plan_limits)
+        await _safe_migration(session, "_update_polar_plan_prices", _update_polar_plan_prices)
+        await _safe_migration(session, "_create_razorpay_plans", _create_razorpay_plans)

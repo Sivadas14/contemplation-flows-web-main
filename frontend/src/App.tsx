@@ -19,6 +19,8 @@ import AdminRoute from "@/components/AdminRoute";
 import PublicRoute from "@/components/PublicRoute";
 
 import Register from "./pages/Register";
+import ForgotPassword from "./pages/ForgotPassword";
+import ResetPassword from "./pages/ResetPassword";
 import ProfileCompletion from "./pages/ProfileCompletion";
 import AuthCallback from "./pages/AuthCallback";
 import Subscription from "./pages/Subscription";
@@ -74,6 +76,8 @@ const App = () => {
                                     <Routes>
                                         <Route path="/signin" element={<PublicRoute element={<SignIn />} />} />
                                         <Route path="/register" element={<PublicRoute element={<Register />} />} />
+                                        <Route path="/forgot-password" element={<PublicRoute element={<ForgotPassword />} />} />
+                                        <Route path="/reset-password" element={<ResetPassword />} />
                                         <Route path="/privacy" element={<PublicRoute element={<Privacy />} />} />
                                         <Route path="/terms" element={<PublicRoute element={<Terms />} />} />
                                         <Route path="/profile-completion" element={<ProfileCompletion />} />

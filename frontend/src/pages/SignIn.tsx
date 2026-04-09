@@ -50,16 +50,12 @@ const SignIn: React.FC = () => {
       if (response.success) {
         setSuccess("Sign in successful! Redirecting...");
 
-        // Correct way to access location state
-        const location = window.history.state?.usr; // Access the underlying history state if location prop isn't passed directly or hook usage is complex here
-        // Actually, useLocation hook is better if available, but let's stick to a robust fallback
-        // The issue with window.history.state in React Router v6 is it's wrapped.
-        // Let's rely on the previous assumption but check rigorously:
+        const location = window.history.state?.usr;
         const fromState = location as { from?: { pathname: string; search: string } } | undefined;
         let targetPath = fromState?.from?.pathname ? `${fromState.from.pathname}${fromState.from.search || ''}` : '/';
 
         if (response.userProfile?.role === 'ADMIN') {
-          targetPath = '/admin'; // Admin always goes to admin dashboard on login usually
+          targetPath = '/admin';
         }
 
         console.log('🔄 [SignIn] Redirecting to:', targetPath, 'Role:', response.userProfile?.role);
@@ -68,7 +64,13 @@ const SignIn: React.FC = () => {
           navigate(targetPath, { replace: true });
         }, 500);
       } else {
-        setError(response.message);
+        // Detect unconfirmed email specifically so user knows what to do
+        const msg = response.message || '';
+        if (msg.toLowerCase().includes('email not confirmed') || msg.toLowerCase().includes('not confirmed')) {
+          setError('Your email address is not yet verified. Please check your inbox for the 8-digit verification code, or use the OTP sign-in option to verify and log in.');
+        } else {
+          setError(msg || 'Sign in failed. Please check your email and password.');
+        }
       }
     } catch (err: any) {
       setError(err.message || "Sign in failed. Please try again.");
@@ -285,9 +287,17 @@ const SignIn: React.FC = () => {
                 </div>
 
                 <div>
-                  <Label htmlFor="password" className="text-gray-700">
-                    Password
-                  </Label>
+                  <div className="flex items-center justify-between">
+                    <Label htmlFor="password" className="text-gray-700">
+                      Password
+                    </Label>
+                    <Link
+                      to="/forgot-password"
+                      className="text-sm text-orange-600 hover:text-orange-700 font-medium"
+                    >
+                      Forgot password?
+                    </Link>
+                  </div>
                   <Input
                     id="password"
                     type="password"

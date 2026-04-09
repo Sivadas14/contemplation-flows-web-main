@@ -9,7 +9,7 @@ import { Mail, Smartphone } from "lucide-react";
 import { useAuth } from "@/contexts/AuthContext";
 
 const Register: React.FC = () => {
-  const { register, signInWithGoogle, verifyOtp, resendOtp } = useAuth();
+  const { register, signInWithGoogle, signInWithOtp, verifyOtp, resendOtp } = useAuth();
   const navigate = useNavigate();
 
   const [step, setStep] = useState<'form' | 'otp'>('form');
@@ -80,10 +80,13 @@ const Register: React.FC = () => {
 
       if (response.success) {
         if (response.requiresEmailConfirmation) {
-          // Email confirmation required - show OTP step
+          // Account created. signUp() sends a magic link, not an 8-digit code.
+          // Call signInWithOtp() — exactly like the working sign-in OTP flow —
+          // so the user receives the same 8-digit code they can type in below.
           setPendingUser(response.user);
+          await signInWithOtp(email);
           setStep('otp');
-          setSuccess("Registration successful! Please check your email for the verification code. Your profile has been created.");
+          setSuccess("Account created! Please check your email for an 8-digit verification code.");
         } else {
           // No email confirmation required - redirect to home
           setSuccess("Registration successful! Redirecting...");
@@ -118,7 +121,7 @@ const Register: React.FC = () => {
     setIsLoading(true);
 
     try {
-      const response = await verifyOtp(email, otp, 'signup');
+      const response = await verifyOtp(email, otp); // type 'email' — same as working sign-in OTP flow
 
       if (response.success) {
         setSuccess("Email verified successfully! Redirecting...");
@@ -180,7 +183,7 @@ const Register: React.FC = () => {
             <CardDescription>
               {step === 'form'
                 ? ''
-                : <>We have sent a 8-digit verification code to ${email}</>
+                : <>We have sent an 8-digit verification code to {email}</>
               }
             </CardDescription>
           </CardHeader>

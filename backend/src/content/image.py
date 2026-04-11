@@ -1,4 +1,5 @@
 import uuid
+import re
 from io import BytesIO
 import random
 from textwrap import dedent
@@ -328,15 +329,25 @@ async def _get_quote_from_citations_or_random(
     quote_prompt = dedent(
         f"""
     You are given passages from Sri Ramana Maharshi's authenticated teachings.
-    Your task is to select and return the single most profound or meaningful sentence
-    (or at most two short sentences) directly from the provided text below.
+    Your task is to select and return a complete, meaningful quote directly from
+    the provided text below — something that would look beautiful on a
+    contemplation card.
 
     Rules:
     - You MUST quote or very closely paraphrase the actual text provided. Do NOT invent.
     - Do NOT draw on any knowledge outside the provided passages.
-    - Choose the sentence that best stands alone as a contemplative insight.
-    - Return ONLY the chosen sentence(s). No attribution, no filename, no source label,
-      no preamble, no explanation. Just the quote itself.
+    - The quote MUST be a grammatically complete sentence or sentences. Never return
+      a fragment, a phrase without a verb, or a half-finished thought.
+    - Aim for 1 to 3 sentences that together form a complete, self-contained insight.
+    - The ideal length is 15 to 50 words. Shorter is fine if the sentence is complete
+      and powerful. Never exceed 60 words.
+    - If a single sentence from the source is profound enough on its own, return just
+      that one sentence — but make sure it is COMPLETE (has subject, verb, and makes
+      full sense to a reader who has no other context).
+    - Do NOT start with fragments like "Ramana says..." or "The Self is..." unless
+      that is actually a complete sentence.
+    - Return ONLY the chosen quote. No attribution, no filename, no source label,
+      no preamble, no explanation, no quotation marks. Just the quote itself.
 
     Source passages:
     {source_text}
@@ -348,11 +359,48 @@ async def _get_quote_from_citations_or_random(
 
     # Safety: strip any trailing attribution line (e.g. "— Talks with Sri Ramana Maharshi"
     # or "Source: ..." or "From ...") that the LLM may append despite instructions.
-    import re
     quote = re.sub(r'\n?\s*[—–-]+\s*\S.*$', '', quote, flags=re.MULTILINE).strip()
     quote = re.sub(r'\n?\s*(Source|From|Ref|Reference)\s*:.*$', '', quote, flags=re.IGNORECASE | re.MULTILINE).strip()
     # Strip leading "From filename:" if the LLM echoed a chunk prefix
     quote = re.sub(r'^From [^:]+:\s*', '', quote, flags=re.IGNORECASE).strip()
+    # Strip surrounding quotation marks if present
+    quote = re.sub(r'^["\'""]+|["\'""]+$', '', quote).strip()
+
+    # VALIDATION: If the LLM returned a tiny fragment (under 8 words) or something
+    # that doesn't look like a complete sentence, ask it to try again with stricter rules.
+    word_count = len(quote.split())
+    has_verb_like = bool(re.search(r'\b(is|are|was|were|has|have|had|be|do|does|did|can|could|will|would|shall|should|may|might|must|need|know|see|find|realize|seek|remain|abide|exist|arise|appear|come|go|give|take|make|think|feel|become|turn|cease|let|ask|look|search|enquire|inquire|discover|understand|attain|reach|transcend)\b', quote, re.IGNORECASE))
+
+    if word_count < 6 or (word_count < 10 and not has_verb_like):
+        logger.warning(f"Quote too short or fragment-like ({word_count} words): '{quote}'. Retrying...")
+        retry_prompt = dedent(
+            f"""
+        The previous attempt returned a fragment that is too short to stand alone
+        on a contemplation card: "{quote}"
+
+        Please try again. Select a COMPLETE sentence (or 2-3 short sentences) from
+        the source passages below. The quote must:
+        - Be grammatically complete (subject + verb + meaning)
+        - Be 15-50 words long
+        - Make sense to someone reading it with no other context
+        - Come directly from the provided text
+
+        Source passages:
+        {source_text}
+        """
+        )
+        retry_response = await model.chat_async(retry_prompt)
+        retry_quote = retry_response.strip()
+        retry_quote = re.sub(r'\n?\s*[—–-]+\s*\S.*$', '', retry_quote, flags=re.MULTILINE).strip()
+        retry_quote = re.sub(r'\n?\s*(Source|From|Ref|Reference)\s*:.*$', '', retry_quote, flags=re.IGNORECASE | re.MULTILINE).strip()
+        retry_quote = re.sub(r'^From [^:]+:\s*', '', retry_quote, flags=re.IGNORECASE).strip()
+        retry_quote = re.sub(r'^["\'""]+|["\'""]+$', '', retry_quote).strip()
+
+        if len(retry_quote.split()) >= 6:
+            quote = retry_quote
+            logger.info(f"Retry produced better quote ({len(retry_quote.split())} words)")
+        else:
+            logger.warning(f"Retry also short. Using best available: '{quote}'")
 
     return quote
 
@@ -588,23 +636,72 @@ def add_caption_to_image(
     if current_line:
         wrapped_lines.append(current_line)
 
-    # Limit to 3 lines — add ellipsis to the LAST line if truncated
-    if len(wrapped_lines) > 3:
-        wrapped_lines = wrapped_lines[:3]
-        last_line = wrapped_lines[2]
-        while True:
-            test_line = last_line + "…"
-            bbox = temp_draw.textbbox((0, 0), test_line, font=font)
-            text_width = bbox[2] - bbox[0]
-            if text_width <= max_text_width:
-                wrapped_lines[2] = test_line
+    # Allow up to 5 lines. If text still overflows, reduce font size and re-wrap
+    # rather than truncating mid-sentence (which ruins the quote).
+    MAX_LINES = 5
+    if len(wrapped_lines) > MAX_LINES:
+        # Try progressively smaller font sizes to fit the full quote
+        for smaller_size in [int(font_size * 0.85), int(font_size * 0.72), int(font_size * 0.6)]:
+            font = _load_font(smaller_size)
+            max_text_width = int(orig_width * max_width_ratio)
+            wrapped_lines = []
+            current_line = ""
+            for word in words:
+                test_line = current_line + (" " if current_line else "") + word
+                bbox = temp_draw.textbbox((0, 0), test_line, font=font)
+                text_width = bbox[2] - bbox[0]
+                if text_width <= max_text_width:
+                    current_line = test_line
+                else:
+                    if current_line:
+                        wrapped_lines.append(current_line)
+                        current_line = word
+                    else:
+                        wrapped_lines.append(word)
+                        current_line = ""
+            if current_line:
+                wrapped_lines.append(current_line)
+
+            font_size = smaller_size
+            if len(wrapped_lines) <= MAX_LINES:
                 break
-            # Remove last word and try again
-            words_in_line = last_line.split()
-            if len(words_in_line) <= 1:
-                wrapped_lines[2] = last_line + "…"
-                break
-            last_line = " ".join(words_in_line[:-1])
+
+        # If still too long after smallest font, truncate at sentence boundary
+        if len(wrapped_lines) > MAX_LINES:
+            full_text = " ".join(wrapped_lines)
+            # Find the last sentence-ending punctuation that fits within MAX_LINES
+            sentences = re.split(r'(?<=[.!?])\s+', full_text)
+            truncated = ""
+            for sentence in sentences:
+                candidate = (truncated + " " + sentence).strip() if truncated else sentence
+                # Re-wrap candidate to check line count
+                test_lines = []
+                test_current = ""
+                for w in candidate.split():
+                    test_line = test_current + (" " if test_current else "") + w
+                    bbox = temp_draw.textbbox((0, 0), test_line, font=font)
+                    tw = bbox[2] - bbox[0]
+                    if tw <= max_text_width:
+                        test_current = test_line
+                    else:
+                        if test_current:
+                            test_lines.append(test_current)
+                            test_current = w
+                        else:
+                            test_lines.append(w)
+                            test_current = ""
+                if test_current:
+                    test_lines.append(test_current)
+                if len(test_lines) <= MAX_LINES:
+                    truncated = candidate
+                    wrapped_lines = test_lines
+                else:
+                    break  # Adding this sentence would overflow
+            # If we couldn't fit even one sentence, hard-cap as last resort
+            if not truncated:
+                wrapped_lines = wrapped_lines[:MAX_LINES]
+                last_line = wrapped_lines[-1]
+                wrapped_lines[-1] = last_line + "…"
 
     # Calculate text dimensions
     line_height = font_size + 20  # Add generous line spacing for readability

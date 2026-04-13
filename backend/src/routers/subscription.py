@@ -1972,7 +1972,14 @@ async def create_razorpay_checkout(
     )
     return SuccessResponse(
         message="Razorpay checkout created",
-        data={"checkout_url": result["short_url"]},
+        data={
+            "checkout_url": result["short_url"],
+            "subscription_id": result["subscription_id"],
+            "key_id": settings.razorpay_key_id,
+            "user_email": user.email_id,
+            "user_name": user.name or user.email_id,
+            "plan_name": plan.name,
+        },
     )
 
 

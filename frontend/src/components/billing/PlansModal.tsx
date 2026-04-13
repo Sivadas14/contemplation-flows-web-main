@@ -10,6 +10,8 @@ import { DowngradePreviewModal } from '../subscription/DowngradePreviewModal';
 import { UpgradePreview, DowngradePreview } from '@/apis/wire';
 import { useUsageQuery, usePlansQuery, UsageData } from '@/hooks/useBillingData';
 import { isIndianUser, setCurrencyOverride, INR_PRICES } from '../subscription/plansData';
+import { openRazorpayCheckout } from '@/lib/razorpayCheckout';
+import { useUsage } from '@/contexts/UsageContext';
 
 interface LocalPlan {
     id: string | number;
@@ -144,6 +146,7 @@ export const PlansModal: React.FC<PlansModalProps> = ({ isOpen, onClose, onSucce
     const { userProfile } = useAuth();
     const { data: usageData, isLoading: usageLoading } = useUsageQuery();
     const { data: fetchedPlans, isLoading: plansLoading } = usePlansQuery();
+    const { refreshUsage, refreshSubscription } = useUsage();
 
     const [billingCycle, setBillingCycle] = useState<'MONTHLY' | 'YEARLY'>('MONTHLY');
     // Currency state — initialised from localStorage/timezone, updates instantly on toggle
@@ -291,19 +294,65 @@ export const PlansModal: React.FC<PlansModalProps> = ({ isOpen, onClose, onSucce
                 return;
             }
 
-            // Indian users → Razorpay checkout
+            // Indian users → Razorpay embedded checkout
             if (indiaUser && !plan.is_free) {
-                const successUrl = window.location.href;
                 const response = await paymentAPI.createRazorpayCheckoutSession(
                     Number(plan.id),
                     userId,
-                    successUrl,
                 );
-                const checkoutUrl = response?.data?.checkout_url || response?.checkout_url;
-                if (checkoutUrl) {
-                    window.location.href = checkoutUrl;
-                } else {
-                    toast.error("Failed to start Razorpay payment session");
+                const payload = response?.data || response;
+                const subscriptionId: string | undefined = payload?.subscription_id;
+                const keyId: string | undefined = payload?.key_id;
+                const userEmail: string = payload?.user_email || '';
+                const userName: string = payload?.user_name || userProfile?.name || userEmail;
+                const planName: string = payload?.plan_name || plan.name;
+
+                if (!subscriptionId || !keyId) {
+                    toast.error('Failed to start Razorpay payment session');
+                    return;
+                }
+
+                // Open the embedded Razorpay modal. setIsProcessing stays true so the
+                // button shows a spinner while the modal is open.
+                try {
+                    await openRazorpayCheckout({
+                        keyId,
+                        subscriptionId,
+                        planName,
+                        userEmail,
+                        userName,
+                        onSuccess: async () => {
+                            toast.success(
+                                `Payment successful — ${planName} is being activated. Your new limits will appear in a moment.`,
+                            );
+                            setIsProcessing(false);
+                            // Give the webhook a few seconds to mark the subscription active,
+                            // then refresh so the UI reflects the new plan.
+                            setTimeout(async () => {
+                                try {
+                                    await Promise.all([refreshUsage(), refreshSubscription()]);
+                                } catch (err) {
+                                    console.error('Refresh after payment failed:', err);
+                                }
+                                if (onSuccess) onSuccess();
+                                onClose();
+                            }, 2500);
+                        },
+                        onFailure: (reason: string) => {
+                            toast.error(`Payment failed: ${reason}`);
+                            setIsProcessing(false);
+                        },
+                        onDismiss: () => {
+                            toast.info('Payment cancelled. You can try again any time.');
+                            setIsProcessing(false);
+                        },
+                    });
+                } catch (err) {
+                    console.error('Razorpay checkout open failed:', err);
+                    toast.error(
+                        'Could not open the payment window. Please check your connection and try again.',
+                    );
+                    setIsProcessing(false);
                 }
                 return;
             }

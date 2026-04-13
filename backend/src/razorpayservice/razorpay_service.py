@@ -186,8 +186,8 @@ class RazorpayService:
                 "user_email": user_email,
             },
         }
-        if callback_url:
-            data["callback_url"] = callback_url
+        # Note: callback_url is not supported by Razorpay subscription API in live mode.
+        # The redirect after payment is handled via the short_url hosted page.
 
         result = client.subscription.create(data=data)
         sub_id    = result.get("id")

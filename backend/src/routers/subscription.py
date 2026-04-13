@@ -2147,12 +2147,54 @@ async def razorpay_sync_my_subscription(
             ),
         )
 
-    # Prefer an active/authenticated one.
+    def _summary(s: dict) -> dict:
+        """Small, user-friendly summary of a subscription for diagnostics."""
+        return {
+            "id": s.get("id"),
+            "status": s.get("status"),
+            "plan_id": s.get("plan_id"),
+            "paid_count": s.get("paid_count"),
+            "total_count": s.get("total_count"),
+            "created_at": s.get("created_at"),
+        }
+
+    # 1st preference: status is active or authenticated.
+    # 2nd preference: status is something else BUT paid_count > 0 (money
+    # was captured against this sub even if the status field is lagging).
     active_candidates = [
         s for s in candidates
         if (s.get("status") or "").lower() in ("active", "authenticated")
     ]
-    chosen = active_candidates[0] if active_candidates else candidates[0]
+    paid_candidates = [
+        s for s in candidates
+        if int(s.get("paid_count") or 0) > 0
+        and s not in active_candidates
+    ]
+
+    chosen = None
+    if active_candidates:
+        chosen = active_candidates[0]
+    elif paid_candidates:
+        chosen = paid_candidates[0]
+
+    if chosen is None:
+        # Nothing activatable. Surface the full inventory so the user can
+        # see exactly what Razorpay holds for their account and we can
+        # identify which (if any) was actually paid.
+        inventory = [_summary(s) for s in candidates[:10]]
+        raise HTTPException(
+            status_code=409,
+            detail=(
+                "Found "
+                f"{len(candidates)} Razorpay subscription(s) tagged with your "
+                "user id, but none of them are in an activatable state — they "
+                "are either still in 'created' (no payment received) or in a "
+                "terminal state. If you paid recently, wait ~30 seconds and "
+                "try again; Razorpay sometimes lags on the status flip. If "
+                "the payment never completed, check your bank/card statement. "
+                f"Inventory (newest first): {inventory}"
+            ),
+        )
 
     sub_id = chosen.get("id")
     status = await svc.activate_subscription_from_payment(
@@ -2162,9 +2204,15 @@ async def razorpay_sync_my_subscription(
         subscription_data=chosen,
     )
     if status != "activated":
+        inventory = [_summary(s) for s in candidates[:10]]
         raise HTTPException(
             status_code=409,
-            detail=f"Subscription found ({sub_id}) but activation returned '{status}'.",
+            detail=(
+                f"Subscription {sub_id} (status={chosen.get('status')}, "
+                f"paid_count={chosen.get('paid_count')}) could not be "
+                f"activated (reason: {status}). "
+                f"Full inventory (newest first): {inventory}"
+            ),
         )
 
     return SuccessResponse(

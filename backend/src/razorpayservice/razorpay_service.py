@@ -260,13 +260,26 @@ class RazorpayService:
             return "missing_plan_id"
 
         # For a newly completed first payment, status may be 'authenticated' or
-        # 'active'. We activate on either.
-        if status not in ("active", "authenticated"):
+        # 'active'. We activate on either. We also treat any subscription with
+        # a positive paid_count as activatable — this covers the rare case
+        # where the status hasn't flipped yet but money has already been
+        # captured (Razorpay occasionally lags on the status transition).
+        paid_count = int(subscription_data.get("paid_count") or 0)
+        if status not in ("active", "authenticated") and paid_count <= 0:
             logger.warning(
-                "[RAZORPAY] verify: subscription %s is in unexpected state '%s'",
-                razorpay_subscription_id, status,
+                "[RAZORPAY] verify: subscription %s is in state '%s' with "
+                "paid_count=%d — cannot activate (no payment received yet)",
+                razorpay_subscription_id, status, paid_count,
             )
             return f"unexpected_status:{status}"
+
+        if status not in ("active", "authenticated") and paid_count > 0:
+            logger.info(
+                "[RAZORPAY] verify: subscription %s is in state '%s' but has "
+                "paid_count=%d — activating on the strength of the recorded "
+                "payment despite the lagging status field",
+                razorpay_subscription_id, status, paid_count,
+            )
 
         plan_row = (await session.execute(
             select(Plan).where(Plan.razorpay_plan_id == razorpay_plan_id)

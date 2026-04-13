@@ -257,6 +257,7 @@ const Chat = () => {
                 setImageGenerationContentId(null);
                 setGeneratingImageForMessage(null);
                 setImageGenerationError(null);
+                refreshUsage(); // Update card count immediately
               } else if (content.status === "failed") {
                 setImageGenerationError("Image generation failed. Please try again.");
                 setImageGenerationContentId(null);

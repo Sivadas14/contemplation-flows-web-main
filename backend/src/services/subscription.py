@@ -471,9 +471,26 @@ async def sync_user_subscription(
     stmt = select(UserProfile).where(UserProfile.id == user_id)
     result = await session.execute(stmt)
     user = result.scalars().first()
-    
+
     if not user:
         raise HTTPException(status_code=404, detail="User not found")
+
+    # 1b. Detect active Razorpay subscription for this user.
+    # Polar sync must NEVER cancel a Razorpay sub or downgrade a Razorpay-paid
+    # user to FREE — these are two independent payment gateways.
+    rzp_stmt = select(Subscription).where(
+        Subscription.user_id == user.id,
+        Subscription.status == SubscriptionStatus.ACTIVE,
+        Subscription.polar_subscription_id.like("rzp_%"),
+    )
+    rzp_res = await session.execute(rzp_stmt)
+    active_rzp_sub = rzp_res.scalars().first()
+    if active_rzp_sub:
+        print(
+            f"DEBUG: User {user.id} has an active Razorpay subscription "
+            f"{active_rzp_sub.polar_subscription_id}. Polar sync will NOT "
+            f"cancel it or downgrade the user."
+        )
 
     # 2. Fetch Subscriptions from Polar
     def _fetch_polar_subs():
@@ -563,38 +580,56 @@ async def sync_user_subscription(
                 session.add(local_sub)
                 print(f"DEBUG: Updated Local Sub: {local_sub}")
 
-            # Mark other active subscriptions for this user as canceled (Cleanup)
-            # EXCLUDE local free subscriptions
+            # Mark other active Polar subscriptions for this user as canceled
+            # (Cleanup). EXCLUDE local free subscriptions AND Razorpay
+            # subscriptions — Razorpay is a separate gateway that this code
+            # path knows nothing about, and wiping rzp_* rows here would
+            # silently revoke a paying user's plan.
             cleanup_stmt = update(Subscription).where(
                 Subscription.user_id == user.id,
                 Subscription.status == SubscriptionStatus.ACTIVE,
                 Subscription.polar_subscription_id != active_sub.id,
-                ~Subscription.polar_subscription_id.like("free_%")
+                ~Subscription.polar_subscription_id.like("free_%"),
+                ~Subscription.polar_subscription_id.like("rzp_%"),
             ).values(status=SubscriptionStatus.CANCELED, ended_at=datetime.utcnow())
             await session.execute(cleanup_stmt)
-            print(f"DEBUG: Cleaned up other active subscriptions for user {user.id}")
+            print(f"DEBUG: Cleaned up other active Polar subscriptions for user {user.id}")
                 
     else:
-        # No active subscription (expired, canceled, or local free)
-        # Downgrade user
-        if user.plan_type != PlanType.FREE: # Prevent redundant writes
-             user.plan_type = PlanType.FREE
+        # No active Polar subscription found.
+        # CRITICAL: if the user has an active Razorpay subscription, do NOT
+        # downgrade them and do NOT cancel anything — they are paying via a
+        # separate gateway that this function has no visibility into.
+        if active_rzp_sub:
+            print(
+                f"DEBUG: No active Polar subscription for user {user.id}, but "
+                f"Razorpay subscription {active_rzp_sub.polar_subscription_id} "
+                f"is active. Leaving user.plan_type={user.plan_type} unchanged "
+                f"and returning without any downgrade."
+            )
+            await session.commit()
+            return False
+
+        # Otherwise, legitimate Polar-side downgrade to FREE.
+        if user.plan_type != PlanType.FREE:  # Prevent redundant writes
+            user.plan_type = PlanType.FREE
         print(f"DEBUG: Downgraded User: {user}")
-        
-        # Mark local PAID subscriptions as canceled if they exist
-        # DO NOT cancel local free subscriptions
+
+        # Mark local PAID Polar subscriptions as canceled if they exist.
+        # DO NOT cancel local free subscriptions or Razorpay subscriptions.
         local_subs_stmt = select(Subscription).where(
-            Subscription.user_id == user.id, 
+            Subscription.user_id == user.id,
             Subscription.status == SubscriptionStatus.ACTIVE,
-            ~Subscription.polar_subscription_id.like("free_%")
+            ~Subscription.polar_subscription_id.like("free_%"),
+            ~Subscription.polar_subscription_id.like("rzp_%"),
         )
-        print(f"DEBUG: Found Local Paid Subs to potentially cancel: {local_subs_stmt}")
+        print(f"DEBUG: Found Local Paid Polar Subs to potentially cancel: {local_subs_stmt}")
         local_subs_res = await session.execute(local_subs_stmt)
         for local_sub in local_subs_res.scalars():
-             local_sub.status = SubscriptionStatus.CANCELED
-             local_sub.ended_at = datetime.utcnow()
-             session.add(local_sub)
-             print(f"DEBUG: Marked Local Paid Sub {local_sub.id} as Canceled")
+            local_sub.status = SubscriptionStatus.CANCELED
+            local_sub.ended_at = datetime.utcnow()
+            session.add(local_sub)
+            print(f"DEBUG: Marked Local Paid Polar Sub {local_sub.id} as Canceled")
 
         # If no active local subscription at all (including free), ensure user is on FREE plan_type
         # This is a safety check. Usually there SHOULD be a free subscription.
@@ -609,7 +644,7 @@ async def sync_user_subscription(
 
     session.add(user)
     await session.commit()
-    
+
     return active_sub is not None
 
 

@@ -51,16 +51,32 @@ export const BillingPage: React.FC = () => {
         const customerSessionToken = urlParams.get('customer_session_token');
 
         if (checkoutSuccess === 'true' || sessionId || customerSessionToken) {
-            console.log('🎉 [BillingPage] Checkout success detected, refreshing usage...');
+            console.log('🎉 [BillingPage] Polar checkout success detected, syncing subscription before refresh...');
 
-
-            refetchUsage();
-
-            toast.success("Purchase successful! Your quota has been updated.");
-
+            // Strip query params immediately so this effect does not re-fire on re-render
             navigate(location.pathname, { replace: true });
+
+            // Synchronously activate the subscription from Polar's API instead of
+            // waiting for the webhook. This closes the race where the user lands
+            // back on the Billing page before Polar's webhook has reached our
+            // backend, which otherwise leaves them showing FREE even though
+            // payment succeeded.
+            (async () => {
+                try {
+                    if (userProfile?.id) {
+                        await paymentAPI.syncSubscription(userProfile.id);
+                    }
+                } catch (err) {
+                    console.error('[BillingPage] Polar sync after checkout failed:', err);
+                    // Fall through to refetchUsage anyway — the webhook may still
+                    // land and update the state shortly.
+                } finally {
+                    await Promise.all([refetchUsage(), refreshSubscription()]);
+                    toast.success("Purchase successful! Your quota has been updated.");
+                }
+            })();
         }
-    }, [location.search, location.pathname, navigate, refetchUsage]);
+    }, [location.search, location.pathname, navigate, refetchUsage, refreshSubscription, userProfile?.id]);
 
 
     const [isProcessing, setIsProcessing] = useState(false);
@@ -147,6 +163,29 @@ export const BillingPage: React.FC = () => {
         }
     };
 
+    const handleSyncPolar = async () => {
+        if (!userProfile?.id) {
+            toast.error('Cannot sync: user profile not loaded yet.');
+            return;
+        }
+        setIsProcessing(true);
+        try {
+            await paymentAPI.syncSubscription(userProfile.id);
+            toast.success('Polar subscription synced. Refreshing your plan...');
+            await Promise.all([refetchUsage(), refreshSubscription()]);
+        } catch (error: any) {
+            console.error('Polar sync failed:', error);
+            const detail =
+                error?.response?.data?.detail ||
+                error?.response?.data?.message ||
+                error?.message ||
+                'Unknown error';
+            toast.error(`Could not sync subscription: ${detail}`);
+        } finally {
+            setIsProcessing(false);
+        }
+    };
+
     const handleBack = () => {
         if (currentView === 'history') {
             setCurrentView('billing');
@@ -215,25 +254,43 @@ export const BillingPage: React.FC = () => {
                         {isFree && (
                             <div className="bg-white/60 backdrop-blur-sm rounded-lg shadow-sm border border-[#ECE5DF] p-4 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3">
                                 <div className="text-sm text-[#472b20]">
-                                    <span className="font-semibold">Paid via Razorpay but still on Free?</span>
+                                    <span className="font-semibold">Paid but still on Free?</span>
                                     <span className="text-[#472b20]/70"> Click sync to activate your plan instantly.</span>
                                 </div>
-                                <Button
-                                    onClick={handleSyncRazorpay}
-                                    disabled={isProcessing}
-                                    variant="outline"
-                                    size="sm"
-                                    className="text-[#472b20] border-[#d05e2d] hover:bg-[#ECE5DF] font-medium shrink-0"
-                                >
-                                    {isProcessing ? (
-                                        <>
-                                            <Loader2 className="w-4 h-4 animate-spin mr-2" />
-                                            Syncing...
-                                        </>
-                                    ) : (
-                                        'Sync with Razorpay'
-                                    )}
-                                </Button>
+                                <div className="flex flex-col sm:flex-row gap-2 shrink-0">
+                                    <Button
+                                        onClick={handleSyncRazorpay}
+                                        disabled={isProcessing}
+                                        variant="outline"
+                                        size="sm"
+                                        className="text-[#472b20] border-[#d05e2d] hover:bg-[#ECE5DF] font-medium shrink-0"
+                                    >
+                                        {isProcessing ? (
+                                            <>
+                                                <Loader2 className="w-4 h-4 animate-spin mr-2" />
+                                                Syncing...
+                                            </>
+                                        ) : (
+                                            'Sync with Razorpay'
+                                        )}
+                                    </Button>
+                                    <Button
+                                        onClick={handleSyncPolar}
+                                        disabled={isProcessing}
+                                        variant="outline"
+                                        size="sm"
+                                        className="text-[#472b20] border-[#d05e2d] hover:bg-[#ECE5DF] font-medium shrink-0"
+                                    >
+                                        {isProcessing ? (
+                                            <>
+                                                <Loader2 className="w-4 h-4 animate-spin mr-2" />
+                                                Syncing...
+                                            </>
+                                        ) : (
+                                            'Sync with Polar'
+                                        )}
+                                    </Button>
+                                </div>
                             </div>
                         )}
 

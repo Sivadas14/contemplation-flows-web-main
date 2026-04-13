@@ -36,6 +36,26 @@ from src.wire import ContemplationCardContent
 # Set up logger
 logger = logging.getLogger(__name__)
 
+# Authentic Ramana Maharshi quotes used as fallback when source chunks are unusable.
+# These are verified, complete sentences suitable for contemplation cards.
+FALLBACK_RAMANA_QUOTES = [
+    "Your own Self-Realization is the greatest service you can render the world.",
+    "The mind is nothing but a bundle of thoughts. The thought 'I' is the root of all thoughts.",
+    "Silence is also conversation.",
+    "Happiness is the very nature of the Self; happiness and the Self are not different.",
+    "The degree of freedom from unwanted thoughts and the degree of concentration on a single thought are the measures to gauge spiritual progress.",
+    "Whatever is destined not to happen will not happen, try as you may. Whatever is destined to happen will happen, do what you may to prevent it.",
+    "There is neither creation nor destruction, neither destiny nor free will, neither path nor achievement. This is the final truth.",
+    "The present moment always will have been.",
+    "Realization is not acquisition of anything new nor is it a new faculty. It is only removal of all camouflage.",
+    "Mind is consciousness which has put on limitations. You are originally unlimited and perfect. Later you take on limitations and become the mind.",
+    "Be still. It is the wind that makes the water ripple. The Self remains unchanging in the midst of all activities.",
+    "The world is illusory; Brahman alone is real; Brahman is the world.",
+    "Turn your vision inward and then the whole world will be full of supreme Spirit.",
+    "No one succeeds without effort. Those who succeed owe their success to perseverance.",
+    "To know the Self is to be the Self, for the Self is consciousness.",
+]
+
 CONTEMPLATION_PROMPTS = [
     "Arunachala hill at golden sunrise, soft mist rising, warm ochre light, devotional atmosphere",
     "Interior of Sri Ramanasramam hall, oil lamp flame, worn stone floor, profound stillness",
@@ -323,6 +343,27 @@ async def _get_quote_from_citations_or_random(
             logger.info("No citations found, using random source file")
             source_text = await _get_random_chunks_text(session)
 
+    # Validate source text before sending to LLM.
+    # Chunks that are just page numbers, indexes, or very short fragments are useless.
+    def _is_usable_source_text(text: str) -> bool:
+        """Returns True only if the text has enough real prose to extract a quote from."""
+        # Strip numbers, punctuation, whitespace and see what's left
+        words = re.findall(r'[a-zA-Z]{3,}', text)  # real words, at least 3 chars
+        if len(words) < 15:
+            logger.warning(f"Source text too sparse (only {len(words)} real words) — skipping")
+            return False
+        # Reject if it looks like an index (mostly numbers with few words)
+        tokens = text.split()
+        num_count = sum(1 for t in tokens if re.match(r'^\d+\.?$', t))
+        if len(tokens) > 0 and num_count / len(tokens) > 0.4:
+            logger.warning(f"Source text looks like an index ({num_count}/{len(tokens)} tokens are numbers) — skipping")
+            return False
+        return True
+
+    if not _is_usable_source_text(source_text):
+        logger.info("Source text not usable — using fallback Ramana quote")
+        return random.choice(FALLBACK_RAMANA_QUOTES)
+
     # Extract a genuine quote from the Ramana source text.
     # Crucially: we ask the LLM to EXTRACT or closely paraphrase from the provided text,
     # never to invent or draw on general knowledge.
@@ -365,6 +406,31 @@ async def _get_quote_from_citations_or_random(
     quote = re.sub(r'^From [^:]+:\s*', '', quote, flags=re.IGNORECASE).strip()
     # Strip surrounding quotation marks if present
     quote = re.sub(r'^["\'""]+|["\'""]+$', '', quote).strip()
+
+    # JUNK DETECTION: If the LLM returned an apology, meta-comment, or confusion
+    # instead of a quote, discard it and use a fallback immediately.
+    JUNK_PATTERNS = [
+        r"i('m| am) sorry",
+        r"i misunderstood",
+        r"could you clarify",
+        r"i apologize",
+        r"please provide",
+        r"i attempted to",
+        r"the directive",
+        r"it appears i",
+        r"i was unable",
+        r"no relevant",
+        r"doesn't provide",
+        r"does not provide",
+        r"i cannot",
+        r"i can't",
+        r"provide more.*content",
+        r"adhere to your guidelines",
+    ]
+    is_junk = any(re.search(p, quote, re.IGNORECASE) for p in JUNK_PATTERNS)
+    if is_junk:
+        logger.warning(f"LLM returned junk/apology instead of quote. Falling back. Got: '{quote[:80]}'")
+        return random.choice(FALLBACK_RAMANA_QUOTES)
 
     # VALIDATION: If the LLM returned a tiny fragment (under 8 words) or something
     # that doesn't look like a complete sentence, ask it to try again with stricter rules.

@@ -49,7 +49,7 @@ class Settings(BaseSettings):
     polar_organization_id: str | None = None
 
     # Razorpay (Indian payment gateway)
-    razorpay_key_id: str | None = None
+    razorpay_key_id: str | None = "rzp_live_ScxX3vi78mStf5"
     razorpay_key_secret: str | None = None
     razorpay_webhook_secret: str | None = None
 

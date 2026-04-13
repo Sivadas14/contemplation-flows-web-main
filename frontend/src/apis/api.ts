@@ -398,6 +398,24 @@ export const paymentAPI = {
         return response.data;
     },
 
+    verifyRazorpayPayment: async (
+        paymentId: string,
+        subscriptionId: string,
+        signature: string,
+    ) => {
+        // Calls /api/subscriptions/razorpay-verify-payment — activates the
+        // subscription in our DB immediately, without waiting for the webhook.
+        const response = await apiClient.post(
+            '/subscriptions/razorpay-verify-payment',
+            {
+                razorpay_payment_id: paymentId,
+                razorpay_subscription_id: subscriptionId,
+                razorpay_signature: signature,
+            },
+        );
+        return response.data;
+    },
+
     syncSubscription: async (userId: string): Promise<any> => {
         // Matches CURL: GET /api/subscriptions/sync?user_id=...
         const response = await apiClient.get(`/subscriptions/sync?user_id=${encodeURIComponent(userId)}`);

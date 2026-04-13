@@ -321,22 +321,39 @@ export const PlansModal: React.FC<PlansModalProps> = ({ isOpen, onClose, onSucce
                         planName,
                         userEmail,
                         userName,
-                        onSuccess: async () => {
-                            toast.success(
-                                `Payment successful — ${planName} is being activated. Your new limits will appear in a moment.`,
-                            );
+                        onSuccess: async (resp) => {
+                            // Verify on our backend synchronously so the user's
+                            // plan is activated before we refresh the UI — we
+                            // don't rely on the webhook to land first.
+                            try {
+                                await paymentAPI.verifyRazorpayPayment(
+                                    resp.razorpay_payment_id,
+                                    resp.razorpay_subscription_id || subscriptionId,
+                                    resp.razorpay_signature,
+                                );
+                                toast.success(`Payment successful — ${planName} is now active.`);
+                            } catch (verifyErr: any) {
+                                console.error('Payment verification failed:', verifyErr);
+                                // Payment went through on Razorpay's side but our
+                                // activation failed. Tell the user clearly and still
+                                // refresh — the webhook may catch up shortly.
+                                const detail =
+                                    verifyErr?.response?.data?.detail ||
+                                    verifyErr?.message ||
+                                    'Unknown error';
+                                toast.error(
+                                    `Payment received, but we could not update your plan instantly (${detail}). It should update within a minute — please refresh. If it does not, contact support.`,
+                                );
+                            }
+
                             setIsProcessing(false);
-                            // Give the webhook a few seconds to mark the subscription active,
-                            // then refresh so the UI reflects the new plan.
-                            setTimeout(async () => {
-                                try {
-                                    await Promise.all([refreshUsage(), refreshSubscription()]);
-                                } catch (err) {
-                                    console.error('Refresh after payment failed:', err);
-                                }
-                                if (onSuccess) onSuccess();
-                                onClose();
-                            }, 2500);
+                            try {
+                                await Promise.all([refreshUsage(), refreshSubscription()]);
+                            } catch (err) {
+                                console.error('Refresh after payment failed:', err);
+                            }
+                            if (onSuccess) onSuccess();
+                            onClose();
                         },
                         onFailure: (reason: string) => {
                             toast.error(`Payment failed: ${reason}`);

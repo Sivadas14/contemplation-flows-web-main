@@ -201,6 +201,136 @@ class RazorpayService:
         logger.info("[RAZORPAY] Created subscription %s for user %s", sub_id, user_id)
         return {"subscription_id": sub_id, "short_url": short_url}
 
+    # -- Synchronous payment verification -----------------------------------
+
+    def verify_payment_signature(
+        self,
+        razorpay_payment_id: str,
+        razorpay_subscription_id: str,
+        razorpay_signature: str,
+    ) -> bool:
+        """
+        Verify the signature returned by Razorpay Checkout JS to the success
+        handler. Formula:
+            expected = HMAC_SHA256(payment_id + "|" + subscription_id, key_secret)
+        Returns True if the signature is valid.
+        """
+        settings = get_settings()
+        secret = settings.razorpay_key_secret or ""
+        if not secret:
+            logger.error("[RAZORPAY] key_secret not configured — cannot verify signature")
+            return False
+
+        message = f"{razorpay_payment_id}|{razorpay_subscription_id}".encode("utf-8")
+        expected = hmac.new(
+            secret.encode("utf-8"),
+            message,
+            hashlib.sha256,
+        ).hexdigest()
+        return hmac.compare_digest(expected, razorpay_signature)
+
+    def fetch_subscription(self, subscription_id: str) -> dict:
+        """
+        Fetch a subscription from Razorpay. Synchronous — wrap in
+        run_in_threadpool when calling from an async endpoint.
+        """
+        client = get_razorpay_client()
+        return client.subscription.fetch(subscription_id)
+
+    async def activate_subscription_from_payment(
+        self,
+        session: AsyncSession,
+        user_id: str,
+        razorpay_subscription_id: str,
+        subscription_data: dict,
+    ) -> str:
+        """
+        Create or update a Subscription row from a verified Razorpay subscription
+        payload, and set the user's plan_type. Returns a short status string.
+
+        Mirrors _on_activated but operates on a subscription payload fetched
+        from the API (instead of a webhook envelope), so the user sees their
+        new plan immediately without waiting for the webhook.
+        """
+        razorpay_plan_id = subscription_data.get("plan_id")
+        status = (subscription_data.get("status") or "").lower()
+
+        if not razorpay_plan_id:
+            logger.error("[RAZORPAY] verify: subscription has no plan_id")
+            return "missing_plan_id"
+
+        # For a newly completed first payment, status may be 'authenticated' or
+        # 'active'. We activate on either.
+        if status not in ("active", "authenticated"):
+            logger.warning(
+                "[RAZORPAY] verify: subscription %s is in unexpected state '%s'",
+                razorpay_subscription_id, status,
+            )
+            return f"unexpected_status:{status}"
+
+        plan_row = (await session.execute(
+            select(Plan).where(Plan.razorpay_plan_id == razorpay_plan_id)
+        )).scalar_one_or_none()
+        if not plan_row:
+            logger.error(
+                "[RAZORPAY] verify: no Plan found for razorpay_plan_id=%s",
+                razorpay_plan_id,
+            )
+            return "plan_not_found"
+
+        user = (await session.execute(
+            select(UserProfile).where(UserProfile.id == user_id)
+        )).scalar_one_or_none()
+        if not user:
+            logger.error("[RAZORPAY] verify: no UserProfile for user_id=%s", user_id)
+            return "user_not_found"
+
+        db_sub_id = f"rzp_{razorpay_subscription_id}"
+
+        start_ts = subscription_data.get("current_start")
+        end_ts   = subscription_data.get("current_end")
+        period_start = (
+            datetime.fromtimestamp(start_ts, tz=timezone.utc) if start_ts
+            else datetime.now(timezone.utc)
+        )
+        period_end = (
+            datetime.fromtimestamp(end_ts, tz=timezone.utc) if end_ts
+            else None
+        )
+
+        existing = (await session.execute(
+            select(Subscription).where(Subscription.polar_subscription_id == db_sub_id)
+        )).scalar_one_or_none()
+
+        if existing:
+            existing.status               = SubscriptionStatus.ACTIVE
+            existing.plan_id              = plan_row.id
+            existing.current_period_start = period_start
+            existing.current_period_end   = period_end
+            existing.cancel_at_period_end = False
+            session.add(existing)
+        else:
+            session.add(Subscription(
+                id=uuid4(),
+                user_id=user_id,
+                plan_id=plan_row.id,
+                polar_subscription_id=db_sub_id,
+                status=SubscriptionStatus.ACTIVE,
+                current_period_start=period_start,
+                current_period_end=period_end,
+                cancel_at_period_end=False,
+            ))
+
+        user.plan_type = plan_row.plan_type
+        session.add(user)
+        await session.commit()
+
+        logger.info(
+            "[RAZORPAY] Sync-activated subscription %s -> plan '%s' for user %s",
+            razorpay_subscription_id, plan_row.name, user_id,
+        )
+        return "activated"
+
     # -- Webhook ------------------------------------------------------------
 
     def verify_webhook_signature(self, body: bytes, signature: str) -> bool:

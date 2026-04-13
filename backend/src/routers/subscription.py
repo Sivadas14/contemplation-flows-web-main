@@ -2059,6 +2059,104 @@ async def create_razorpay_plans_manual(
     return {"key_id_preview": key_preview, "client_test": test_result, "results": results}
 
 
+@router.post("/razorpay-verify-payment")
+async def razorpay_verify_payment(
+    payload: dict = Body(...),
+    current_user: UserProfile = Depends(get_current_user),
+    session: AsyncSession = Depends(get_db_session),
+):
+    """
+    Called by the frontend immediately after the Razorpay Checkout JS
+    success handler fires. We:
+      1. Verify the signature (proves the payment really came from Razorpay).
+      2. Fetch the subscription from Razorpay API to read the authoritative
+         plan_id / status / period dates.
+      3. Create or update the Subscription row and set user.plan_type.
+
+    Making activation synchronous here means the UI can refresh the user's
+    plan right away, without waiting for the subscription.activated webhook.
+    The webhook remains as a backup for cancellations, renewals, and any
+    case where the browser closes before this endpoint is hit.
+
+    Expected body:
+        {
+          "razorpay_payment_id": "pay_xxx",
+          "razorpay_subscription_id": "sub_xxx",
+          "razorpay_signature": "<hex>"
+        }
+    """
+    from src.razorpayservice.razorpay_service import RazorpayService
+    from src.razorpayservice.razorpay_client import is_razorpay_enabled
+
+    if not is_razorpay_enabled():
+        raise HTTPException(status_code=503, detail="INR payment gateway is not available.")
+
+    payment_id      = payload.get("razorpay_payment_id")
+    subscription_id = payload.get("razorpay_subscription_id")
+    signature       = payload.get("razorpay_signature")
+
+    if not payment_id or not subscription_id or not signature:
+        raise HTTPException(
+            status_code=400,
+            detail="razorpay_payment_id, razorpay_subscription_id and razorpay_signature are required.",
+        )
+
+    svc = RazorpayService()
+
+    # 1. Verify signature
+    if not svc.verify_payment_signature(payment_id, subscription_id, signature):
+        logger.warning(
+            "[RAZORPAY] verify-payment: signature mismatch for sub=%s user=%s",
+            subscription_id, current_user.id,
+        )
+        raise HTTPException(status_code=400, detail="Payment signature verification failed.")
+
+    # 2. Fetch the subscription from Razorpay to read plan_id + status
+    try:
+        sub_data = await run_in_threadpool(svc.fetch_subscription, subscription_id)
+    except Exception as exc:
+        logger.error(
+            "[RAZORPAY] verify-payment: fetch failed for sub=%s: %s",
+            subscription_id, exc, exc_info=True,
+        )
+        raise HTTPException(
+            status_code=502,
+            detail="Could not confirm the subscription with Razorpay. Please refresh in a moment.",
+        )
+
+    # 3. Cross-check: the subscription's notes.user_id must match the caller
+    notes_user_id = (sub_data.get("notes") or {}).get("user_id")
+    if notes_user_id and str(notes_user_id) != str(current_user.id):
+        logger.error(
+            "[RAZORPAY] verify-payment: user mismatch — sub notes=%s caller=%s",
+            notes_user_id, current_user.id,
+        )
+        raise HTTPException(status_code=403, detail="Subscription does not belong to this user.")
+
+    # 4. Activate in DB
+    status = await svc.activate_subscription_from_payment(
+        session=session,
+        user_id=str(current_user.id),
+        razorpay_subscription_id=subscription_id,
+        subscription_data=sub_data,
+    )
+
+    if status != "activated":
+        logger.warning(
+            "[RAZORPAY] verify-payment: activation returned '%s' for sub=%s",
+            status, subscription_id,
+        )
+        raise HTTPException(
+            status_code=409,
+            detail=f"Could not activate subscription (reason: {status}). Please contact support.",
+        )
+
+    return SuccessResponse(
+        message="Payment verified and subscription activated",
+        data={"subscription_id": subscription_id},
+    )
+
+
 @router.post("/razorpay-webhook")
 async def razorpay_webhook(
     request: Request,

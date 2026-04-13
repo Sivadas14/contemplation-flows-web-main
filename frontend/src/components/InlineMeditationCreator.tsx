@@ -136,8 +136,8 @@ const InlineMeditationCreator = ({
     }
   }, [usage, selectedLength]);
 
-  // Use polling hook - stop polling when in fullscreen
-  const shouldPoll = !!(contentId && !fullScreen);
+  // Use polling hook - always poll when contentId is set (including fullscreen)
+  const shouldPoll = !!(contentId);
   const { status, contentUrl, error: pollingError } = useContentPolling(contentId, shouldPoll);
 
   // Reset state when modal opens/closes
@@ -151,7 +151,11 @@ const InlineMeditationCreator = ({
       setError(null);
       setSelectedLength("10 min");
       setSelectedFormat("Audio");
-    } else if (initialContent) {
+    } else {
+      // Refresh usage every time the modal opens so minutes remaining is current
+      refreshUsage();
+    }
+    if (isOpen && initialContent) {
       // If initialContent is provided, go straight to full screen
       setFullScreen(true);
       setCurrentContentUrl(initialContent.url);

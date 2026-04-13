@@ -79,7 +79,7 @@ const ContemplationModal = ({ isOpen, onClose, conversationId, messageId, existi
   const [currentContentUrl, setCurrentContentUrl] = useState<string | null>(null);
 
   // Use polling hook
-  const shouldPoll = !!(contentId && !fullScreen);
+  const shouldPoll = !!(contentId); // Poll regardless of fullScreen state
   const { status, contentUrl, error: pollingError } = useContentPolling(contentId, shouldPoll);
 
   // Reset state when modal opens/closes
@@ -90,6 +90,9 @@ const ContemplationModal = ({ isOpen, onClose, conversationId, messageId, existi
       setCurrentContentUrl(null);
       setIsInitiating(false);
       setError(null);
+    } else {
+      // Refresh usage every time the modal opens so count is always current
+      refreshUsage();
     }
   }, [isOpen]);
 

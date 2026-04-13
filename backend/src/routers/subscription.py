@@ -1986,16 +1986,26 @@ async def create_razorpay_plans_manual(
     from src.razorpayservice.razorpay_service import create_razorpay_plan
     from src.settings import get_settings
 
+    import os
     settings = get_settings()
     key_id = settings.razorpay_key_id or "(not set)"
     # Show first 12 chars of key to verify it's the right one, mask the rest
     key_preview = key_id[:12] + "..." if len(key_id) > 12 else key_id
 
+    # Dump all ASAM_RAZORPAY env vars at the OS level to debug loading issues
+    raw_env = {}
+    for k, v in os.environ.items():
+        if "RAZORPAY" in k.upper():
+            raw_env[k] = v[:12] + "..." if len(v) > 12 else "(empty)" if not v else v
+
     if not is_razorpay_enabled():
         return {
             "error": "Razorpay not configured",
             "key_id_preview": key_preview,
+            "key_id_type": type(settings.razorpay_key_id).__name__,
+            "key_id_value_repr": repr(settings.razorpay_key_id)[:30] if settings.razorpay_key_id else "None",
             "key_secret_set": bool(settings.razorpay_key_secret),
+            "raw_env_vars": raw_env,
             "hint": "Check ASAM_RAZORPAY_KEY_ID and ASAM_RAZORPAY_KEY_SECRET in App Runner env vars"
         }
 

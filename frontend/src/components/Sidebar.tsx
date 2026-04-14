@@ -240,40 +240,58 @@ const Sidebar = () => {
                 </div>
             </ScrollArea>
 
-            {/* Usage strip — free plan only */}
-            {isFree && usage && (
+            {/* Usage strip — shown for all plans (Free, Seeker, etc.) */}
+            {usage && (
                 <div
                     className="mx-3 mb-2 p-3 rounded-lg bg-[#FDF4EF] border border-[#ECE5DF] cursor-pointer hover:bg-[#F5E6DC] transition-colors"
                     onClick={() => navigate("/billing")}
                 >
-                    <p className="text-[10px] font-semibold text-[#472b20]/50 uppercase tracking-wider mb-2">Free plan usage</p>
+                    <p className="text-[10px] font-semibold text-[#472b20]/50 uppercase tracking-wider mb-2">
+                        {(() => {
+                            const planLabel = (usage.plan_name || planName || "Your").trim();
+                            // Strip trailing " Plan" if present so we don't say "Seeker Plan plan usage"
+                            const cleaned = planLabel.replace(/\s*plan\s*$/i, "");
+                            return `${cleaned} plan usage`;
+                        })()}
+                    </p>
                     {[
                         { label: "Chats", used: usage.conversations.used, limit: usage.conversations.limit },
                         { label: "Cards", used: usage.image_cards.used, limit: usage.image_cards.limit },
                         { label: "Meditation", used: usage.meditation_duration.used, limit: usage.meditation_duration.limit, unit: "min" },
                     ].map(({ label, used, limit, unit }) => {
-                        const limitNum = typeof limit === "number" ? limit : (parseInt(String(limit), 10) || 0);
-                        const pct = limitNum > 0 ? Math.min(100, Math.round((used / limitNum) * 100)) : 0;
-                        const remaining = limitNum - used;
-                        const almostOut = pct >= 67;
+                        // Detect unlimited: non-numeric string (e.g. "unlimited") OR limit <= 0 with a string label
+                        const limitStr = String(limit).toLowerCase();
+                        const parsed = typeof limit === "number" ? limit : parseInt(String(limit), 10);
+                        const isUnlimited = isNaN(parsed) || limitStr === "unlimited" || limitStr === "infinity" || parsed < 0;
+                        const limitNum = isUnlimited ? 0 : parsed;
+                        const pct = isUnlimited || limitNum <= 0 ? 0 : Math.min(100, Math.round((used / limitNum) * 100));
+                        const remaining = isUnlimited ? Infinity : limitNum - used;
+                        const almostOut = !isUnlimited && pct >= 67;
+                        const exhausted = !isUnlimited && remaining <= 0;
                         return (
                             <div key={label} className="mb-1.5 last:mb-0">
                                 <div className="flex justify-between items-center mb-0.5">
                                     <span className="text-[11px] text-[#472b20]/70">{label}</span>
-                                    <span className={`text-[11px] font-medium ${remaining <= 0 ? "text-red-500" : almostOut ? "text-orange-500" : "text-[#472b20]/60"}`}>
-                                        {remaining <= 0 ? "limit reached" : `${remaining}${unit ? ` ${unit}` : ""} left`}
+                                    <span className={`text-[11px] font-medium ${exhausted ? "text-red-500" : almostOut ? "text-orange-500" : "text-[#472b20]/60"}`}>
+                                        {isUnlimited
+                                            ? "Unlimited"
+                                            : exhausted
+                                                ? "limit reached"
+                                                : `${remaining}${unit ? ` ${unit}` : ""} left`}
                                     </span>
                                 </div>
                                 <div className="h-1 rounded-full bg-[#ECE5DF] overflow-hidden">
                                     <div
-                                        className={`h-full rounded-full transition-all ${remaining <= 0 ? "bg-red-400" : almostOut ? "bg-orange-400" : "bg-[#D05E2D]"}`}
-                                        style={{ width: `${pct}%` }}
+                                        className={`h-full rounded-full transition-all ${exhausted ? "bg-red-400" : almostOut ? "bg-orange-400" : "bg-[#D05E2D]"}`}
+                                        style={{ width: `${isUnlimited ? 0 : pct}%` }}
                                     />
                                 </div>
                             </div>
                         );
                     })}
-                    <p className="text-[10px] text-[#D05E2D] mt-2 font-medium">Upgrade for more →</p>
+                    <p className="text-[10px] text-[#D05E2D] mt-2 font-medium">
+                        {isFree ? "Upgrade for more →" : "Manage plan →"}
+                    </p>
                 </div>
             )}
 

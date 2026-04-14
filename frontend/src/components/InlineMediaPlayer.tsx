@@ -1,7 +1,9 @@
 import React, { useState } from 'react';
-import { Music, Video, Play, X, Volume2, FileText, ChevronDown, ChevronUp, PlayIcon } from 'lucide-react';
+import { Music, Video, Play, X, Volume2, FileText, ChevronDown, ChevronUp, PlayIcon, Download } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { getFullStorageUrl } from '@/lib/storage';
+import { downloadFromUrl } from '@/lib/download';
+import { toast } from 'sonner';
 
 interface InlineMediaPlayerProps {
     url: string;
@@ -25,14 +27,33 @@ export const InlineMediaPlayer: React.FC<InlineMediaPlayerProps> = ({ url, type,
         }
     };
 
+    const handleDownload = async (e: React.MouseEvent, kind: 'audio' | 'video') => {
+        e.stopPropagation();
+        const filename = kind === 'audio' ? 'meditation-audio.mp3' : 'meditation-video.mp4';
+        const ok = await downloadFromUrl(url, filename);
+        if (!ok) {
+            toast.error(`Failed to download ${kind}. Please try again.`);
+        }
+    };
+
     if (type === 'audio') {
         return (
             <div className="mt-4 max-w-md">
                 <div className="flex flex-col gap-2">
-                    <div className="flex items-center gap-2">
-                        <Music className="w-4 h-4 text-[#D05E2E]" />
-
-                        <span className="text-sm font-medium" style={{ color: '#472b20' }}>Guided Meditation Audio</span>
+                    <div className="flex items-center justify-between gap-2">
+                        <div className="flex items-center gap-2">
+                            <Music className="w-4 h-4 text-[#D05E2E]" />
+                            <span className="text-sm font-medium" style={{ color: '#472b20' }}>Guided Meditation Audio</span>
+                        </div>
+                        <Button
+                            variant="ghost"
+                            size="sm"
+                            className="h-7 w-7 p-0 hover:bg-black/10 rounded-full"
+                            onClick={(e) => handleDownload(e, 'audio')}
+                            title="Download audio"
+                        >
+                            <Download className="w-4 h-4" style={{ color: '#472b20' }} />
+                        </Button>
                     </div>
                     <audio
                         key={url}
@@ -58,14 +79,25 @@ export const InlineMediaPlayer: React.FC<InlineMediaPlayerProps> = ({ url, type,
                             <Video className="w-4 h-4 text-purple-600" />
                             <span className="text-sm font-medium text-purple-800">Meditation Video</span>
                         </div>
-                        <Button
-                            variant="ghost"
-                            size="sm"
-                            className="h-6 w-6 p-0 hover:bg-purple-100 rounded-full"
-                            onClick={() => setIsExpanded(false)}
-                        >
-                            <X className="w-4 h-4 text-purple-600" />
-                        </Button>
+                        <div className="flex items-center gap-1">
+                            <Button
+                                variant="ghost"
+                                size="sm"
+                                className="h-6 w-6 p-0 hover:bg-purple-100 rounded-full"
+                                onClick={(e) => handleDownload(e, 'video')}
+                                title="Download video"
+                            >
+                                <Download className="w-4 h-4 text-purple-600" />
+                            </Button>
+                            <Button
+                                variant="ghost"
+                                size="sm"
+                                className="h-6 w-6 p-0 hover:bg-purple-100 rounded-full"
+                                onClick={() => setIsExpanded(false)}
+                            >
+                                <X className="w-4 h-4 text-purple-600" />
+                            </Button>
+                        </div>
                     </div>
                     <video
                         src={url}
@@ -108,10 +140,20 @@ export const InlineMediaPlayer: React.FC<InlineMediaPlayerProps> = ({ url, type,
         <div className="mt-4 max-w-md">
             <div className='flex flex-col gap-2'>
 
-            <div className="flex items-center gap-2">
-                <PlayIcon className="w-4 h-4 text-[#D05E2E]" />
-
-                <span className="text-sm font-medium" style={{ color: '#472b20' }}>Guided Meditation Video</span>
+            <div className="flex items-center justify-between gap-2">
+                <div className="flex items-center gap-2">
+                    <PlayIcon className="w-4 h-4 text-[#D05E2E]" />
+                    <span className="text-sm font-medium" style={{ color: '#472b20' }}>Guided Meditation Video</span>
+                </div>
+                <Button
+                    variant="ghost"
+                    size="sm"
+                    className="h-7 w-7 p-0 hover:bg-black/10 rounded-full"
+                    onClick={(e) => handleDownload(e, 'video')}
+                    title="Download video"
+                >
+                    <Download className="w-4 h-4" style={{ color: '#472b20' }} />
+                </Button>
             </div>
             <div className="relative group cursor-pointer overflow-hidden rounded-lg aspect-video"
                 onClick={handleOpen}>

@@ -20,6 +20,7 @@ from src.db import (
     ContentType,
     Conversation,
     Message,
+    MessageRole,
     SourceDocument,
     DocumentChunk,
 )
@@ -215,9 +216,9 @@ async def generate_audio_from_transcript_optimized(transcript: str) -> bytes:
     async def _gen_one(chunk_text: str) -> bytes:
         return await model.text_to_speech_async(
             prompt=chunk_text,
-            voice="alloy",
+            voice="onyx",
             model="gpt-4o-mini-tts",
-            instructions="Speak in a calm, neutral voice with natural pacing. Maintain consistent tone.",
+            instructions="Speak in a calm, grounded male voice with natural pacing. Maintain consistent tone throughout.",
         )
 
     # Run all TTS calls in parallel — this is the biggest single speedup
@@ -434,45 +435,128 @@ async def collect_source_content_optimized(
     session: AsyncSession,
     conversation_id: str,
 ) -> str:
-    """Optimized version of collect_source_content - FIXED FOR SHARED DOCUMENTS"""
-    
-    # Get conversation to get user_id
+    """Collect source content tailored to THIS conversation.
+
+    Order of preference:
+      1. The latest user question + assistant answer in this conversation
+         (so the meditation reflects what the user actually asked).
+      2. Chunks from the citations attached to the most recent assistant
+         message (texts Ramana actually answered from).
+      3. Random chunks from all active source documents — only as a last
+         resort if the conversation has no messages or no citations yet.
+
+    Previously this function ignored the conversation entirely and returned
+    10 random chunks, which is why meditations sounded unrelated to the
+    question. Fixed in the contextuality pass.
+    """
+
+    # Sanity check: conversation exists.
     conv_query = select(Conversation).where(Conversation.id == conversation_id)
     conv_result = await session.execute(conv_query)
     conversation = conv_result.scalar_one_or_none()
-    
     if not conversation:
         raise ValueError("Conversation not found")
-    
-    # Get random chunks without user filtering since documents are shared
-    query = (
-        select(DocumentChunk)
-        .join(SourceDocument)
-        .options(selectinload(DocumentChunk.source_document))
-        .where(SourceDocument.active == True)
-        .order_by(func.random())
-        .limit(10)
-    )
-    result = await session.execute(query)
-    chunks = result.scalars().all()
-    
-    # Process chunks with null checks
-    content_parts = []
+
+    max_tokens = 4000  # Keep well under the 20K prompt slice in the transcript prompt
+    content_parts: list[str] = []
     total_tokens = 0
-    max_tokens = 4000  # Limit to prevent token overflow
-    
-    for chunk in chunks:
-        # Add null check for source_document
-        doc_name = chunk.source_document.filename if chunk.source_document else "Unknown Document"
-        chunk_text = f"Document: {doc_name}\nContent: {chunk.content}\n\n"
-        chunk_tokens = OptimizedQueries.count_tokens_optimized(chunk_text)
-        
-        if total_tokens + chunk_tokens > max_tokens:
-            break
-            
-        content_parts.append(chunk_text)
-        total_tokens += chunk_tokens
-    
+
+    # ── 1. Load the conversation's messages, newest last ──────────────
+    messages_query = (
+        select(Message)
+        .where(Message.conversation_id == conversation_id)
+        .order_by(Message.created_at)
+    )
+    messages_result = await session.execute(messages_query)
+    conversation_messages = list(messages_result.scalars().all())
+
+    # Most recent user question and assistant answer drive the meditation theme.
+    latest_user = next(
+        (m for m in reversed(conversation_messages) if m.role == MessageRole.USER),
+        None,
+    )
+    latest_assistant = next(
+        (m for m in reversed(conversation_messages) if m.role == MessageRole.ASSISTANT),
+        None,
+    )
+
+    if latest_user and latest_user.content:
+        qa_block_parts = [f"The seeker's question:\n{latest_user.content.strip()}"]
+        if latest_assistant and latest_assistant.content:
+            qa_block_parts.append(
+                f"\nRamana's guidance in response:\n{latest_assistant.content.strip()}"
+            )
+        qa_block = "\n".join(qa_block_parts) + "\n\n"
+        qa_tokens = OptimizedQueries.count_tokens_optimized(qa_block)
+        # Reserve at most half the budget for the Q&A so we still have room for
+        # supporting scripture chunks.
+        if qa_tokens <= max_tokens // 2:
+            content_parts.append(qa_block)
+            total_tokens += qa_tokens
+        else:
+            # Q&A is huge (rare) — truncate to half the budget by characters.
+            approx_chars = (max_tokens // 2) * 4  # ~4 chars per token rough cut
+            trimmed = qa_block[:approx_chars]
+            content_parts.append(trimmed + "\n\n")
+            total_tokens += OptimizedQueries.count_tokens_optimized(trimmed)
+
+    # ── 2. Gather chunks from the citations of recent assistant messages ──
+    cited_filenames: list[str] = []
+    # Prefer the most recent assistant message's citations, then fall back
+    # to any prior ones in this conversation.
+    for msg in reversed(conversation_messages):
+        if msg.role != MessageRole.ASSISTANT:
+            continue
+        if msg.citations and isinstance(msg.citations, list):
+            for c in msg.citations:
+                name = getattr(c, "name", None)
+                if name and name not in cited_filenames:
+                    cited_filenames.append(name)
+        if cited_filenames:
+            break  # got something from the latest answer, enough
+
+    if cited_filenames:
+        cited_query = (
+            select(DocumentChunk)
+            .join(SourceDocument)
+            .options(selectinload(DocumentChunk.source_document))
+            .where(
+                SourceDocument.filename.in_(cited_filenames),
+                SourceDocument.active == True,
+            )
+            .order_by(func.random())
+            .limit(10)
+        )
+        cited_result = await session.execute(cited_query)
+        for chunk in cited_result.scalars().all():
+            doc_name = chunk.source_document.filename if chunk.source_document else "Unknown Document"
+            chunk_text = f"From {doc_name}:\n{chunk.content}\n\n"
+            chunk_tokens = OptimizedQueries.count_tokens_optimized(chunk_text)
+            if total_tokens + chunk_tokens > max_tokens:
+                break
+            content_parts.append(chunk_text)
+            total_tokens += chunk_tokens
+
+    # ── 3. Last-resort fallback: random chunks ────────────────────────
+    if total_tokens < max_tokens // 3:
+        fallback_query = (
+            select(DocumentChunk)
+            .join(SourceDocument)
+            .options(selectinload(DocumentChunk.source_document))
+            .where(SourceDocument.active == True)
+            .order_by(func.random())
+            .limit(10)
+        )
+        fallback_result = await session.execute(fallback_query)
+        for chunk in fallback_result.scalars().all():
+            doc_name = chunk.source_document.filename if chunk.source_document else "Unknown Document"
+            chunk_text = f"From {doc_name}:\n{chunk.content}\n\n"
+            chunk_tokens = OptimizedQueries.count_tokens_optimized(chunk_text)
+            if total_tokens + chunk_tokens > max_tokens:
+                break
+            content_parts.append(chunk_text)
+            total_tokens += chunk_tokens
+
     return "".join(content_parts)
 
 
@@ -605,13 +689,13 @@ async def generate_audio_from_transcript(transcript: str) -> bytes:
 
     audio_bytes = await model.text_to_speech_async(
         prompt=cleaned_transcript,
-        voice="alloy",
+        voice="onyx",
         model="gpt-4o-mini-tts",
 
         instructions="""
         For sound effects transcript has tags like [breathing], [pause], [silence], etc.
         Please follow these instructions:
-        - Speak in a calm, soothing voice
+        - Speak in a calm, grounded male voice
         - Pause appropriately for breathing instructions
         - Use natural pacing for meditation
         - Maintain consistent volume and tone

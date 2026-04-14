@@ -14,6 +14,7 @@ import { chatAPI, contentAPI } from "@/apis/api";
 import { useUsage } from "@/contexts/UsageContext";
 import { toast } from "sonner";
 import { getFullStorageUrl } from "@/lib/storage";
+import { downloadFromUrl } from "@/lib/download";
 import type { Message as APIMessage, Conversation, ConversationDetailResponse, ContentGeneration } from "@/apis/wire";
 
 interface Message {
@@ -930,18 +931,8 @@ const Chat = () => {
                       size="sm"
                       className="bg-black/50 hover:bg-black/70 text-white rounded-full h-9 w-9 p-0 backdrop-blur-sm"
                       onClick={async () => {
-                        try {
-                          const response = await fetch(content.url!);
-                          const blob = await response.blob();
-                          const url = window.URL.createObjectURL(blob);
-                          const link = document.createElement('a');
-                          link.download = 'contemplation-card.png';
-                          link.href = url;
-                          link.click();
-                          window.URL.revokeObjectURL(url);
-                        } catch (error) {
-                          console.error("Failed to download image:", error);
-                        }
+                        const ok = await downloadFromUrl(content.url!, 'contemplation-card.png');
+                        if (!ok) toast.error('Failed to download card. Please try again.');
                       }}
                     >
                       <Download className="w-4 h-4" />

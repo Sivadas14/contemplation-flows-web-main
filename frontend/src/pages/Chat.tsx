@@ -259,7 +259,7 @@ const Chat = () => {
                 setImageGenerationError(null);
                 refreshUsage(); // Update card count immediately
               } else if (content.status === "failed") {
-                setImageGenerationError("Image generation failed. Please try again.");
+                setImageGenerationError("Card generation failed. Please try again.");
                 setImageGenerationContentId(null);
                 setGeneratingImageForMessage(null);
               }
@@ -708,7 +708,7 @@ const Chat = () => {
         setImageGenerationError("You've reached your contemplation card limit. Please upgrade your plan.");
         setShowPlansModal(true);
       } else {
-        setImageGenerationError(error instanceof Error ? error.message : "Failed to start image generation");
+        setImageGenerationError(error instanceof Error ? error.message : "Failed to start card generation");
       }
       setGeneratingImageForMessage(null);
     }
@@ -1256,7 +1256,7 @@ const Chat = () => {
                   className="rounded-full h-8 md:h-9 whitespace-nowrap px-3 text-xs md:text-sm"
                 >
                   <ImageIcon className="w-3 md:w-3.5 h-3 md:h-3.5 mr-1 md:mr-1.5" />
-                  Image
+                  Card
                 </Button>
                 <Button
                   onClick={() => handleOpenMeditationCreator('audio')}

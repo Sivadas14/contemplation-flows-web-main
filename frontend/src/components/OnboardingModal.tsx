@@ -15,7 +15,7 @@ const FEATURES = [
     {
         icon: <Image className="w-5 h-5 text-[#D05E2D]" />,
         title: "5 contemplation cards",
-        description: "Generate a beautiful image-based card to anchor your daily reflection practice.",
+        description: "Generate a beautiful contemplation card to anchor your daily reflection practice.",
     },
     {
         icon: <Headphones className="w-5 h-5 text-[#D05E2D]" />,

@@ -29,6 +29,7 @@ interface Message {
     url?: string;
     status: 'pending' | 'processing' | 'complete' | 'failed';
     transcript?: string | null;
+    errorMessage?: string | null;
   }[];
 }
 
@@ -245,7 +246,8 @@ const Chat = () => {
                     ...gc,
                     status: content.status as 'complete' | 'failed',
                     url: content.content_url ? getFullStorageUrl(content.content_url) : gc.url,
-                    transcript: content.transcript || gc.transcript
+                    transcript: content.transcript || gc.transcript,
+                    errorMessage: content.error_message ?? null,
                   };
                   console.log(`Updated content in message ${msg.id}:`, updated);
                   return updated;
@@ -351,7 +353,8 @@ const Chat = () => {
             type: cg.content_type,
             url: cg.content_url ? getFullStorageUrl(cg.content_url) : undefined,
             status: cg.status,
-            transcript: cg.transcript
+            transcript: cg.transcript,
+            errorMessage: cg.error_message ?? null,
           }));
 
           return {
@@ -896,6 +899,11 @@ const Chat = () => {
             return (
               <div key={content.id} className="p-4 bg-red-50 border border-red-200 rounded-lg">
                 <p className="text-sm text-red-600">Failed to generate {content.type}. Please try again.</p>
+                {content.errorMessage && (
+                  <p className="text-xs text-red-500 mt-1 font-mono break-words">
+                    {content.errorMessage}
+                  </p>
+                )}
                 <Button
                   variant="outline"
                   size="sm"

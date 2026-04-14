@@ -59,18 +59,20 @@ export interface ContentGenerationRequest {
 
 export interface ContentGenerationResponse {
     id: string;
-    status: 'processing' | 'complete' | 'failed';
+    status: 'pending' | 'processing' | 'complete' | 'failed';
+    error_message?: string | null;
 }
 
 export interface ContentGeneration {
     id: string;
-    status: 'processing' | 'complete' | 'failed';
+    status: 'pending' | 'processing' | 'complete' | 'failed';
     conversation_id: string;
     message_id: string;
     content_type: 'audio' | 'video' | 'image';
     created_at: string; // ISO timestamp
     content_url: string | null;
     transcript?: string | null;
+    error_message?: string | null;
 }
 
 export interface ContentGenerationListResponse {

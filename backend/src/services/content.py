@@ -23,13 +23,18 @@ from src.content.image import generate_image_content
 
 # Create helper function to map DB model to Wire model
 def map_to_wire_content(content: ContentGeneration, spb_client: Client) -> w.ContentGeneration:
-    status = "processing"
+    # Trust the DB status column (written by background tasks). Fall back to
+    # inferring from content_path only if the row somehow has no status set
+    # (shouldn't happen — column has a server_default of 'pending').
+    status = getattr(content, "status", None) or (
+        "complete" if content.content_path else "processing"
+    )
+    error_message = getattr(content, "error_message", None)
     content_url = None
 
-    if content.content_path:
-        status = "complete"
+    if content.content_path and status == "complete":
         try:
-             # Generate presigned URL for download (expires in 1 hour)
+             # Generate presigned URL for download (expires in 10 years)
             presigned_response = spb_client.storage.from_(
                 "generations"
             ).create_signed_url(
@@ -49,6 +54,7 @@ def map_to_wire_content(content: ContentGeneration, spb_client: Client) -> w.Con
         content_url=content_url,
         created_at=content.created_at,
         transcript=content.transcript,
+        error_message=error_message,
     )
 
 
@@ -245,7 +251,22 @@ async def get_content(
     if not content:
         raise HTTPException(status_code=404, detail="Content not found")
 
-    if content.content_path:
+    # Trust the DB status column as source of truth. Background tasks write
+    # 'complete' / 'failed' explicitly; the server default for unfinished rows
+    # is 'pending'. Fall back to inferring from content_path for resilience.
+    status = getattr(content, "status", None) or (
+        "complete" if content.content_path else "processing"
+    )
+    error_message = getattr(content, "error_message", None)
+
+    # Surface failures so the UI can show the error + Try Again button instead
+    # of spinning forever.
+    if status == "failed":
+        return w.ContentGenerationResponse(
+            id=str(content.id), status="failed", error_message=error_message
+        )
+
+    if status == "complete" and content.content_path:
         try:
             presigned_response = spb_client.storage.from_("generations").create_signed_url(
                 content.content_path, 315360000  # 10 years expiry
@@ -264,11 +285,13 @@ async def get_content(
                 content_url=content_url,
                 created_at=content.created_at,
                 transcript=content.transcript,
+                error_message=None,
             )
         except Exception:
             return w.ContentGenerationResponse(id=str(content.id), status="processing")
-    else:
-        return w.ContentGenerationResponse(id=str(content.id), status="processing")
+
+    # pending / processing / anything else in-flight
+    return w.ContentGenerationResponse(id=str(content.id), status="processing")
 
 
 async def get_image_content(

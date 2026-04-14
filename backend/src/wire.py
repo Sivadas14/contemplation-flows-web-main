@@ -158,18 +158,20 @@ class ContentGenerationRequest(tt.BM):
 
 class ContentGenerationResponse(tt.BM):
     id: str = tt.F("Unique identifier for generated content")
-    status: str = tt.F("Processing status: processing, complete, failed")
+    status: str = tt.F("Processing status: pending, processing, complete, failed")
+    error_message: str | None = tt.F("Error message when status='failed'", None)
 
 
 class ContentGeneration(tt.BM):
     id: str = tt.F("Unique content identifier")
-    status: str = tt.F("Processing status: processing, complete, failed")
+    status: str = tt.F("Processing status: pending, processing, complete, failed")
     conversation_id: str = tt.F("ID of conversation context")
     message_id: str = tt.F("ID of message that triggered generation")
     content_type: str = tt.F("Content type: audio, video, image")
     content_url: str | None = tt.F("Presigned URL for generated content", None)
     created_at: datetime.datetime = tt.F("ISO timestamp of creation")
     transcript: str | None = tt.F("Full meditation script text")
+    error_message: str | None = tt.F("Error message when status='failed'", None)
 
 
 class ContentGenerationListResponse(tt.BM):

@@ -30,6 +30,7 @@ from src.db import get_db_session, get_background_session
 from src.db import OptimizedQueries
 
 from src.utils.profiler import profile_operation, get_profiler, print_profiler_summary
+from src.content.status_helpers import mark_content_failed
 
 # Cache for meditation transcripts
 _transcript_cache = {}
@@ -406,6 +407,8 @@ async def generate_audio_content(
             if content_generation:
                 content_generation.content_path = content_path
                 content_generation.transcript = transcript
+                content_generation.status = "complete"
+                content_generation.error_message = None
                 # Set duration based on the prompt specification
                 duration = 180  # Default 3 minutes
                 if length:
@@ -427,8 +430,10 @@ async def generate_audio_content(
             tu.logger.error(
                 f"Error in background audio generation for content {content_id}: {e}"
             )
-            # Session will be automatically rolled back by the context manager
-            raise
+            # Session will be rolled back by the context manager. Mark the row
+            # as failed in a fresh session so the UI can surface the failure.
+            await mark_content_failed(content_id, e)
+            # Do NOT re-raise — background task failure is now persisted.
 
 
 async def collect_source_content_optimized(

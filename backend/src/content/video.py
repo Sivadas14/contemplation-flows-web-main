@@ -23,6 +23,7 @@ from src.content.audio import (
     generate_audio_from_transcript,
 )
 from src.content.parallel_video import parallel_generator
+from src.content.status_helpers import mark_content_failed
 from contextlib import asynccontextmanager
 
 
@@ -58,6 +59,8 @@ async def generate_video_content(
             if content_generation:
                 content_generation.content_path = content_path
                 content_generation.transcript = transcript
+                content_generation.status = "complete"
+                content_generation.error_message = None
                 # Set duration based on audio generation (3 minutes)
                 # Update duration
                 duration = 180  # Default 3 minutes
@@ -67,7 +70,7 @@ async def generate_video_content(
                     except:
                         pass
                 content_generation.duration_seconds = duration
-                
+
                 await session.commit()
                 tu.logger.info(
                     f"Successfully completed video generation for content {content_id} (duration: {duration}s)"
@@ -81,8 +84,12 @@ async def generate_video_content(
             tu.logger.error(
                 f"Error in background video generation for content {content_id}: {e}"
             )
-            # Session will be automatically rolled back by the context manager
-            raise
+            # Session will be automatically rolled back by the context manager.
+            # Mark the row as failed using a fresh session so the UI can surface
+            # the failure instead of spinning forever.
+            await mark_content_failed(content_id, e)
+            # Do NOT re-raise — this is a background task. The failure is now
+            # recorded in the DB; re-raising would just produce noisy tracebacks.
 
 
 async def generate_video_parallel(

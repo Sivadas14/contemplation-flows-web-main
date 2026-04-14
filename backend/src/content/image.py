@@ -32,6 +32,7 @@ from src.db import (
 from src.settings import get_llm, get_supabase_client, get_supabase_admin_client, get_settings
 from src.db import get_db_session, get_background_session
 from src.wire import ContemplationCardContent
+from src.content.status_helpers import mark_content_failed
 
 # Set up logger
 logger = logging.getLogger(__name__)
@@ -115,6 +116,8 @@ async def generate_image_content(
             if content_generation:
                 content_generation.content_path = content_path
                 content_generation.cc_text = cc_text
+                content_generation.status = "complete"
+                content_generation.error_message = None
                 await session.commit()
                 logger.info(
                     f"Successfully completed image generation for content {content_id}"
@@ -128,8 +131,10 @@ async def generate_image_content(
             logger.error(
                 f"Error in background image generation for content {content_id}: {e}"
             )
-            # Session will be automatically rolled back by the context manager
-            raise
+            # Session will be rolled back by the context manager. Mark the row
+            # as failed in a fresh session so the UI can surface the failure.
+            await mark_content_failed(content_id, e)
+            # Do NOT re-raise — background task failure is now persisted.
 
 
 async def generate_contemplation_card_sync(

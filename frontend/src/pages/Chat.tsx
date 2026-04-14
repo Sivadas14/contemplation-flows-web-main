@@ -75,6 +75,11 @@ const Chat = () => {
   // State for full screen player
   const [selectedMedia, setSelectedMedia] = useState<{ url: string; type: 'audio' | 'video' } | null>(null);
 
+  // Conversation has reached its depth cap (10 questions). Shows an
+  // inline banner with a "Start new conversation" button. Reset whenever
+  // conversationId changes so opening a fresh conversation starts clean.
+  const [depthReached, setDepthReached] = useState(false);
+
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLInputElement>(null);
   const messagesRef = useRef<Message[]>([]);
@@ -167,6 +172,8 @@ const Chat = () => {
       setGeneratingVideoForMessage(null);
       setVideoGenerationContentId(null);
       setVideoGenerationError(null);
+      // New conversation → reset depth banner.
+      setDepthReached(false);
     }
   }, [conversationId]);
 
@@ -561,6 +568,11 @@ const Chat = () => {
           if (error.message === 'QUOTA_EXCEEDED') {
             errorMessage = "You've reached your plan limit. Please upgrade to continue chatting.";
             setShowPlansModal(true);
+          } else if (error.message === 'CONVERSATION_DEPTH_REACHED') {
+            // This conversation has hit its 10-question cap. Show the
+            // inline banner with a "Start new conversation" button.
+            errorMessage = "This conversation has reached its depth of 10 questions. Please start a new conversation to continue exploring.";
+            setDepthReached(true);
           } else if (error.message.includes('Network')) {
             errorMessage = "Network error. Please check your connection and try again.";
           } else if (error.message.includes('401')) {
@@ -1281,7 +1293,9 @@ const Chat = () => {
               </div>
             )}
 
-            {/* Input with mic button — or upgrade CTA when quota exhausted */}
+            {/* Input with mic button — or upgrade CTA when quota exhausted,
+                or "Start new conversation" CTA when this conversation has
+                reached its 10-question depth cap. */}
             {(() => {
               const chatRemaining = usage?.conversations?.remaining;
               const chatExhausted = typeof chatRemaining === 'number' && chatRemaining <= 0;
@@ -1297,6 +1311,26 @@ const Chat = () => {
                         className="px-5 py-2 rounded-full bg-[#D05E2D] hover:bg-[#B84E20] text-white text-sm font-semibold transition-colors"
                       >
                         Upgrade plan →
+                      </button>
+                    </div>
+                    <p className="text-center text-[10px] md:text-xs text-gray-400 mt-2 md:mt-3">
+                      Mindful AI can make mistakes. Consider checking important information.
+                    </p>
+                  </div>
+                );
+              }
+              if (depthReached) {
+                return (
+                  <div className="max-w-2xl mx-auto w-full">
+                    <div className="flex flex-col items-center gap-3 py-4 px-5 rounded-xl bg-[#FDF4EF] border border-[#ECE5DF]">
+                      <p className="text-sm text-[#472b20]/70 text-center">
+                        This conversation has reached its depth of <span className="font-semibold text-[#472b20]">10 questions</span>. Start a new conversation to continue exploring.
+                      </p>
+                      <button
+                        onClick={() => { setDepthReached(false); navigate("/chat"); }}
+                        className="px-5 py-2 rounded-full bg-[#D05E2D] hover:bg-[#B84E20] text-white text-sm font-semibold transition-colors"
+                      >
+                        Start new conversation →
                       </button>
                     </div>
                     <p className="text-center text-[10px] md:text-xs text-gray-400 mt-2 md:mt-3">

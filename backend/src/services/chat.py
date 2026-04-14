@@ -6,7 +6,7 @@ import asyncio
 from asyncio import sleep
 from textwrap import dedent
 from supabase import Client
-from sqlalchemy import select, desc, text, and_
+from sqlalchemy import select, desc, text, and_, func
 from sqlalchemy.orm import selectinload
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -919,6 +919,40 @@ async def chat_completions(
     except Exception as e:
         print("Error loading conversation:", e)
         raise HTTPException(status_code=500, detail=f"Error loading conversation: {e}")
+
+    # Conversation-depth cap: stop a single conversation from growing
+    # indefinitely. A Seeker's 150/month quota counts conversations, not
+    # messages, so without this cap one conversation could be reused forever.
+    # Cap is on user-role messages (the user's questions), not total messages.
+    CONVERSATION_DEPTH_CAP = 10
+    try:
+        depth_query = (
+            select(func.count(db.Message.id))
+            .where(
+                db.Message.conversation_id == conversation_id,
+                db.Message.role == db.MessageRole.USER,
+            )
+        )
+        depth_result = await session.execute(depth_query)
+        user_msg_count = depth_result.scalar_one() or 0
+        if user_msg_count >= CONVERSATION_DEPTH_CAP:
+            raise HTTPException(
+                status_code=409,  # Conflict — conversation state prevents continuation
+                detail={
+                    "code": "CONVERSATION_DEPTH_REACHED",
+                    "message": (
+                        f"This conversation has reached its depth of "
+                        f"{CONVERSATION_DEPTH_CAP} questions. Please start a "
+                        "new conversation to continue exploring."
+                    ),
+                    "cap": CONVERSATION_DEPTH_CAP,
+                },
+            )
+    except HTTPException:
+        raise
+    except Exception as e:
+        # Depth check failure should never block chat — log and continue.
+        print(f"Warning: conversation depth check failed: {e}")
 
     # Save user message
     try:

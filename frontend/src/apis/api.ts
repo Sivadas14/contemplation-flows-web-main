@@ -116,6 +116,20 @@ export const chatAPI = {
                 if (response.status === 429 || response.status === 402) {
                     throw new Error('QUOTA_EXCEEDED');
                 }
+                if (response.status === 409) {
+                    // Could be conversation depth cap. Parse the body to find out.
+                    try {
+                        const errorBody = await response.clone().json();
+                        if (errorBody?.detail?.code === 'CONVERSATION_DEPTH_REACHED') {
+                            throw new Error('CONVERSATION_DEPTH_REACHED');
+                        }
+                    } catch (e) {
+                        if (e instanceof Error && e.message === 'CONVERSATION_DEPTH_REACHED') {
+                            throw e;
+                        }
+                        // fall through to generic error handling
+                    }
+                }
                 const errorText = await response.text();
                 // Also detect quota errors embedded in 500 error bodies
                 if (errorText.includes('quota') || errorText.includes('limit') || errorText.includes('exceeded')) {

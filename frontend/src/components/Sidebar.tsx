@@ -255,7 +255,7 @@ const Sidebar = () => {
                         })()}
                     </p>
                     {[
-                        { label: "Chats", used: usage.conversations.used, limit: usage.conversations.limit },
+                        { label: "Conversations", used: usage.conversations.used, limit: usage.conversations.limit },
                         { label: "Cards", used: usage.image_cards.used, limit: usage.image_cards.limit },
                         { label: "Meditation", used: usage.meditation_duration.used, limit: usage.meditation_duration.limit, unit: "min" },
                     ].map(({ label, used, limit, unit }) => {

@@ -302,9 +302,15 @@ class ParallelVideoGenerator:
         The quote is rendered as a drawtext overlay that fades in (0–1 s) and
         fades out (1 s before QUOTE_SHOW_DUR).
         """
+        # Speed-tuned settings. Ken Burns zoom is so slow (0.0008/frame) that
+        # 15fps is visually indistinguishable from 24fps, and 540p is crisp at
+        # typical player widths (most users view on mobile or a ~700-800px
+        # desktop player). Combined with preset=veryfast and crf=23, these give
+        # roughly a 4-5× encode speedup vs 720p/24fps/fast/crf22 with no
+        # perceivable quality loss on painterly library imagery.
         FADE_DUR = 1.0       # xfade crossfade duration (seconds)
-        FPS = 24
-        WIDTH, HEIGHT = 1280, 720
+        FPS = 15
+        WIDTH, HEIGHT = 960, 540
         QUOTE_SHOW_DUR = 15  # seconds the quote is visible
 
         n = len(images)
@@ -443,8 +449,8 @@ class ParallelVideoGenerator:
                 "-map", "[vout]",
                 "-map", f"{audio_index}:a",
                 "-c:v", "libx264",
-                "-preset", "fast",
-                "-crf", "22",
+                "-preset", "veryfast",  # was "fast" — ~1.5× faster encode
+                "-crf", "23",           # was 22 — tiny quality drop, ~10% faster
                 "-c:a", "aac",
                 "-b:a", "128k",
                 "-pix_fmt", "yuv420p",

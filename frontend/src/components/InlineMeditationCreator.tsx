@@ -476,6 +476,25 @@ const InlineMeditationCreator = ({
                 ? "Create a personalized meditation video with Ramana imagery based on your conversation."
                 : `Create a personalized meditation guide based on your conversation. This will generate a ${selectedFormat.toLowerCase()} session that you can save and use for your practice.`}
             </p>
+
+            {(initialMode === 'video' || (initialMode !== 'audio' && selectedFormat === 'Video')) && (
+              <div
+                className="mt-4 rounded-lg border px-4 py-3 text-sm"
+                style={{
+                  backgroundColor: '#FBF3EA',
+                  borderColor: '#E8CDB0',
+                  color: '#472b20',
+                }}
+                role="note"
+              >
+                <p className="font-semibold mb-1">
+                  ⏳ Video generation takes time. Please keep this window open.
+                </p>
+                <p className="text-xs leading-relaxed" style={{ color: '#6b4a3a' }}>
+                  Estimated time — 5-min video: ~2 minutes · 10-min: ~3 minutes · 15-min: ~4 minutes · 20-min: ~5 minutes. Times vary slightly with server load.
+                </p>
+              </div>
+            )}
           </div>
 
           <div className="text-center">

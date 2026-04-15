@@ -149,7 +149,7 @@ class ParallelVideoGenerator:
         # Step 3: Fetch library images + generate transcript in parallel
         async with profile_operation("parallel_transcript_and_images") as op:
             transcript_task = self.generate_transcript(source_content, length)
-            library_images_task = self._get_multiple_library_images(session)
+            library_images_task = self._get_multiple_library_images(session, target_count=4)
 
             transcript, library_images = await asyncio.gather(transcript_task, library_images_task)
             op.finish(transcript_length=len(transcript), library_image_count=len(library_images))
@@ -157,12 +157,13 @@ class ParallelVideoGenerator:
         # Step 4: Create video
         async with profile_operation("video_creation") as op:
             if len(library_images) >= 1:
-                # LIGHT pipeline: single library image, no zoompan, no xfade.
-                # Designed to encode in <60s on 0.5 CPU Render Starter.
+                # KEN BURNS pipeline: multi-image slideshow with slow zoom-in
+                # + xfade crossfades + drawtext quote overlay.
+                # Tuned for AWS App Runner (more CPU than Render Starter).
                 audio_bytes = await self._generate_audio_optimized(transcript)
                 quote = self._extract_quote_from_transcript(transcript)
-                video_path = await self._create_light_single_image_video(
-                    library_images[0], audio_bytes, quote
+                video_path = await self._create_ken_burns_video_with_quote(
+                    library_images, audio_bytes, quote
                 )
             else:
                 # Fallback: original single DALL-E image pipeline
@@ -363,29 +364,24 @@ class ParallelVideoGenerator:
             cmd += ["-i", audio_path]
 
             # ── 8. Build filtergraph ────────────────────────────────────────────
-            # Ken Burns zoom/pan variations — cycle through for visual variety
+            # Classic meditative: slow zoom-IN, centred, on every image.
+            # Single consistent motion feels contemplative (not busy).
             # zoompan: z=zoom expr, x/y=pan, d=frames, s=size, fps=fps
-            ZOOM_VARIANTS = [
-                # slow zoom in, centred
-                f"zoompan=z='min(zoom+0.0008,1.25)':x='iw/2-(iw/zoom/2)':y='ih/2-(ih/zoom/2)':d={clip_frames}:s={WIDTH}x{HEIGHT}:fps={FPS}",
-                # slow zoom out, centred
-                f"zoompan=z='if(lte(zoom,1),1.2,zoom-0.0008)':x='iw/2-(iw/zoom/2)':y='ih/2-(ih/zoom/2)':d={clip_frames}:s={WIDTH}x{HEIGHT}:fps={FPS}",
-                # zoom in, pan right (start left)
-                f"zoompan=z='min(zoom+0.0008,1.2)':x='0':y='ih/2-(ih/zoom/2)':d={clip_frames}:s={WIDTH}x{HEIGHT}:fps={FPS}",
-                # zoom in, pan left (start right)
-                f"zoompan=z='min(zoom+0.0008,1.2)':x='iw-iw/zoom':y='ih/2-(ih/zoom/2)':d={clip_frames}:s={WIDTH}x{HEIGHT}:fps={FPS}",
-                # zoom in, pan down (start top)
-                f"zoompan=z='min(zoom+0.0008,1.2)':x='iw/2-(iw/zoom/2)':y='0':d={clip_frames}:s={WIDTH}x{HEIGHT}:fps={FPS}",
-                # zoom in, pan up (start bottom)
-                f"zoompan=z='min(zoom+0.0008,1.2)':x='iw/2-(iw/zoom/2)':y='ih-ih/zoom':d={clip_frames}:s={WIDTH}x{HEIGHT}:fps={FPS}",
-            ]
+            # Note: single quotes around expressions protect internal commas from
+            # being parsed as filter-option separators. zoompan is known to
+            # accept this convention across FFmpeg 4.x/5.x/6.x.
+            slow_zoom_in = (
+                f"zoompan=z='min(zoom+0.0008,1.25)'"
+                f":x='iw/2-(iw/zoom/2)'"
+                f":y='ih/2-(ih/zoom/2)'"
+                f":d={clip_frames}:s={WIDTH}x{HEIGHT}:fps={FPS}"
+            )
 
             filter_parts = []
 
-            # Apply zoompan to each image clip
+            # Apply the same slow zoom-in to each image clip
             for i in range(n):
-                variant = ZOOM_VARIANTS[i % len(ZOOM_VARIANTS)]
-                filter_parts.append(f"[{i}:v] {variant},format=yuv420p [v{i}]")
+                filter_parts.append(f"[{i}:v] {slow_zoom_in},format=yuv420p [v{i}]")
 
             # Chain xfade transitions
             if n == 1:
@@ -408,11 +404,15 @@ class ParallelVideoGenerator:
             fade_in_end = 1.0
             fade_out_start = max(quote_end - 1.0, fade_in_end + 1.0)
 
-            alpha_expr = (
+            # Inside an FFmpeg filter option value, `,` is the option separator,
+            # so every `,` inside the alpha expression MUST be backslash-escaped
+            # or the filtergraph parser returns rc=234 (EINVAL).
+            alpha_expr_raw = (
                 f"if(lt(t,{fade_in_end}),t,"
                 f"if(lt(t,{fade_out_start:.1f}),1,"
                 f"if(lt(t,{quote_end:.1f}),{quote_end:.1f}-t,0)))"
             )
+            alpha_expr = alpha_expr_raw.replace(",", "\\,")
 
             dt_parts = [f"drawtext=textfile={quote_textfile}"]
             if font_path:

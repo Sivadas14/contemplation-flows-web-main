@@ -233,6 +233,29 @@ async def _create_ramana_images_table(session: AsyncSession) -> None:
     _log("ramana_images table verified/created.")
 
 
+async def _create_daily_contemplations_table(session: AsyncSession) -> None:
+    """
+    Idempotently create the daily_contemplations table.
+    Caches one Ramana-inspired contemplation (quote + inquiry question) per
+    calendar day (IST), generated lazily on the first request of the day.
+    """
+    await session.execute(text("""
+        CREATE TABLE IF NOT EXISTS daily_contemplations (
+            id          SERIAL      PRIMARY KEY,
+            date_key    VARCHAR(10) NOT NULL UNIQUE,
+            quote       TEXT        NOT NULL,
+            question    TEXT        NOT NULL,
+            created_at  TIMESTAMPTZ NOT NULL DEFAULT NOW()
+        )
+    """))
+    await session.execute(text(
+        "CREATE INDEX IF NOT EXISTS ix_daily_contemplations_date_key "
+        "ON daily_contemplations (date_key)"
+    ))
+    await session.commit()
+    _log("daily_contemplations table verified/created.")
+
+
 async def _add_razorpay_columns(session: AsyncSession) -> None:
     """
     Idempotently add razorpay_plan_id column to plans table.
@@ -491,6 +514,7 @@ async def run_migrations(session_factory) -> None:
         # ── Schema migrations first (ALTER / CREATE) ────────────────────────
         await _safe_migration(session, "_add_onboarding_seen_column", _add_onboarding_seen_column)
         await _safe_migration(session, "_create_ramana_images_table", _create_ramana_images_table)
+        await _safe_migration(session, "_create_daily_contemplations_table", _create_daily_contemplations_table)
         await _safe_migration(session, "_add_razorpay_columns", _add_razorpay_columns)
         await _safe_migration(session, "_add_content_generation_status", _add_content_generation_status)
 

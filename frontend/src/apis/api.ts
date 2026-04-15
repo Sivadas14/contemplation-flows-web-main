@@ -35,6 +35,7 @@ import {
     Addon,
     AddonSubscribeResponse,
     Notification,
+    Contemplation,
 } from './wire';
 
 
@@ -506,6 +507,13 @@ export const paymentAPI = {
         });
         return response.data;
     }
+};
+
+export const contemplationAPI = {
+    getToday: async (): Promise<Contemplation> => {
+        const response = await apiClient.get('/contemplation/today');
+        return response.data;
+    },
 };
 
 export const notificationAPI = {

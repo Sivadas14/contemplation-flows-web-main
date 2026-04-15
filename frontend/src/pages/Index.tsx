@@ -6,13 +6,16 @@ import { Input } from "@/components/ui/input";
 import { ArrowRight, MessageCircle, Heart, MessageSquare, HelpCircle, Plus } from "lucide-react";
 import UserMenu from "@/components/UserMenu";
 import AtmosphericEntry from "@/components/AtmosphericEntry";
-import { chatAPI } from "@/apis/api";
-import { type Conversation } from "@/apis/wire";
+import { chatAPI, contemplationAPI } from "@/apis/api";
+import { type Conversation, type Contemplation } from "@/apis/wire";
 
 const Index = () => {
   const [query, setQuery] = useState("");
   const [conversations, setConversations] = useState<Conversation[]>([]);
   const [isLoadingConversations, setIsLoadingConversations] = useState(true);
+  // Today's Contemplation — fetched from backend, same for every user each
+  // day (IST). Used to build the first quick-prompt button's prompt text.
+  const [contemplation, setContemplation] = useState<Contemplation | null>(null);
   const navigate = useNavigate();
 
   // Fetch conversations on component mount
@@ -32,6 +35,25 @@ const Index = () => {
     };
 
     fetchConversations();
+  }, []);
+
+  // Fetch today's contemplation (independent of conversations). First
+  // request of the day triggers LLM generation on the backend (~2s);
+  // every subsequent call same day is cached and near-instant.
+  useEffect(() => {
+    let cancelled = false;
+    contemplationAPI
+      .getToday()
+      .then((c) => {
+        if (!cancelled) setContemplation(c);
+      })
+      .catch((err) => {
+        // Non-fatal: the pill falls back to a default prompt below.
+        console.error("Failed to fetch today's contemplation:", err);
+      });
+    return () => {
+      cancelled = true;
+    };
   }, []);
 
 
@@ -63,12 +85,19 @@ const Index = () => {
     }
   };
 
-  // Quick prompt options
+  // Quick prompt options. The first pill is "Today's Contemplation" —
+  // its prompt is built from today's quote + inquiry question once the
+  // backend call resolves. Until then we use a gentle placeholder so
+  // taps before the fetch lands still do something reasonable.
+  const todaysPrompt = contemplation
+    ? `${contemplation.quote}\n\n${contemplation.question}`
+    : "What does Ramana Maharshi teach about turning attention inward?";
+
   const quickPrompts = [
     {
       icon: <Heart className="w-4 h-4" />,
-      label: "Today's Meditation",
-      prompt: "What is the importance of self control?"
+      label: "Today's Contemplation",
+      prompt: todaysPrompt
     },
     {
       icon: <MessageSquare className="w-4 h-4" />,

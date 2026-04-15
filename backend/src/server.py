@@ -33,6 +33,7 @@ from src.services import (
     usage as usage_svc,
 )
 from src.routers.notification_bar import router as notification_bar_router
+from src.routers.contemplation import router as contemplation_router
 
 
 from src.services.plan import router as plan_router
@@ -226,6 +227,7 @@ def get_app() -> FastAPI:
     app.include_router(ramana_images_router)
     app.include_router(pollor_router)
     app.include_router(notification_bar_router)
+    app.include_router(contemplation_router)
     app.include_router(feature_router)
     app.include_router(plan_feature_v1_router)
     print("[TRACE] API routers included.")

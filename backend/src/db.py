@@ -369,6 +369,26 @@ class NotificationBar(Base):
     active: Mapped[bool] = mapped_column(Boolean, default=True)
 
 
+class DailyContemplation(Base):
+    """One Ramana-inspired contemplation per calendar day (IST).
+
+    Generated lazily on the first request of the day, then served from
+    cache for all subsequent requests that day. date_key is 'YYYY-MM-DD'
+    in Asia/Kolkata so the rollover matches the user's local dawn.
+    """
+    __tablename__ = "daily_contemplations"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    date_key: Mapped[str] = mapped_column(String(10), unique=True, index=True, nullable=False)
+    quote: Mapped[str] = mapped_column(Text, nullable=False)
+    question: Mapped[str] = mapped_column(Text, nullable=False)
+    created_at: Mapped[datetime.datetime] = mapped_column(
+        DateTime(timezone=True),
+        server_default=func.now(),
+        nullable=False,
+    )
+
+
 class Plan(Base):
     __tablename__ = "plans"
 

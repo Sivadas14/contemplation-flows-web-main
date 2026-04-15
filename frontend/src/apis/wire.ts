@@ -482,3 +482,12 @@ export interface Notification {
     message: string;
     created_at: string;
 }
+
+/** Daily-rotating contemplation (Ramana-inspired quote + inquiry question).
+ *  Returned by GET /api/contemplation/today. Same for every user on a given
+ *  calendar day in IST. */
+export interface Contemplation {
+    date: string;      // YYYY-MM-DD in IST
+    quote: string;
+    question: string;
+}

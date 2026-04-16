@@ -85,20 +85,12 @@ const Index = () => {
     }
   };
 
-  // Quick prompt options. The first pill is "Today's Contemplation" —
-  // its prompt is built from today's quote + inquiry question once the
-  // backend call resolves. Until then we use a gentle placeholder so
-  // taps before the fetch lands still do something reasonable.
+  // Today's Contemplation: prompt text to send to chat when user taps "Begin Inquiry"
   const todaysPrompt = contemplation
     ? `${contemplation.quote}\n\n${contemplation.question}`
     : "What does Ramana Maharshi teach about turning attention inward?";
 
   const quickPrompts = [
-    {
-      icon: <Heart className="w-4 h-4" />,
-      label: "Today's Contemplation",
-      prompt: todaysPrompt
-    },
     {
       icon: <MessageSquare className="w-4 h-4" />,
       label: "Share thoughts",
@@ -152,10 +144,49 @@ const Index = () => {
           <UserMenu />
         </div>
 
-        <div className="text-center mb-10 md:mb-16 mt-8 md:mt-0">
+        <div className="text-center mb-8 md:mb-12 mt-8 md:mt-0">
           <h1 className="text-4xl md:text-6xl font-heading text-brand-heading mb-4 md:mb-8">
             Wisdom AI
           </h1>
+        </div>
+
+        {/* Today's Contemplation Card */}
+        <div className="max-w-2xl mx-auto mb-6 md:mb-8">
+          <div
+            onClick={() => handleQuickPrompt(todaysPrompt)}
+            className="cursor-pointer rounded-2xl border border-orange-200 bg-gradient-to-br from-orange-50 to-amber-50 shadow-md hover:shadow-lg transition-all duration-200 hover:scale-[1.01] hover:border-brand-button p-5 md:p-6"
+          >
+            <div className="flex items-center gap-2 mb-3">
+              <Heart className="w-4 h-4 text-brand-button flex-shrink-0" />
+              <span className="text-xs font-semibold tracking-widest uppercase text-brand-button font-body">
+                Today's Contemplation
+              </span>
+            </div>
+
+            {contemplation ? (
+              <>
+                <p className="text-brand-heading font-heading text-base md:text-lg leading-relaxed mb-4">
+                  "{contemplation.quote}"
+                </p>
+                <p className="text-brand-body font-body text-sm md:text-base italic border-t border-orange-100 pt-3">
+                  ✦ {contemplation.question}
+                </p>
+              </>
+            ) : (
+              /* Loading skeleton */
+              <div className="space-y-2 animate-pulse">
+                <div className="h-4 bg-orange-100 rounded w-full" />
+                <div className="h-4 bg-orange-100 rounded w-4/5" />
+                <div className="h-3 bg-orange-100 rounded w-3/5 mt-3" />
+              </div>
+            )}
+
+            <div className="mt-4 flex justify-end">
+              <span className="text-xs text-brand-button font-body font-medium">
+                Begin Inquiry →
+              </span>
+            </div>
+          </div>
         </div>
 
         {/* Quick Prompts */}

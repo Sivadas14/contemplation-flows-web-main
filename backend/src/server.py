@@ -298,16 +298,29 @@ def get_app() -> FastAPI:
         target_file = full_path if full_path else "index.html"
         file_path = os.path.join(ui_path, *target_file.split("/"))
 
-        # If it's a real file, serve it
+        # If it's a real file (hashed JS/CSS asset), serve it with long cache.
         if os.path.isfile(file_path):
-            return FileResponse(file_path)
+            # Hashed assets (e.g. index-abc123.js) are immutable — cache 1 year.
+            # index.html itself must never be cached so browsers always get the
+            # latest bundle references after a deploy.
+            if target_file == "index.html":
+                return FileResponse(
+                    file_path,
+                    headers={"Cache-Control": "no-store, no-cache, must-revalidate"},
+                )
+            return FileResponse(
+                file_path,
+                headers={"Cache-Control": "public, max-age=31536000, immutable"},
+            )
 
-        # 3. Fallback to index.html for SPA routing (e.g., /signin, /chats, /admin/dashboard)
-        # This allows React Router to handle the URL
+        # 3. Fallback to index.html for SPA routing (e.g., /signin, /chat, /admin)
         index_file = os.path.join(ui_path, "index.html")
         if os.path.exists(index_file):
-            return FileResponse(index_file)
-        
+            return FileResponse(
+                index_file,
+                headers={"Cache-Control": "no-store, no-cache, must-revalidate"},
+            )
+
         return JSONResponse(status_code=404, content={"error": "Frontend not found"})
 
     print("[TRACE] API routers included. get_app() returning app.")

@@ -37,19 +37,23 @@ const Index = () => {
     fetchConversations();
   }, []);
 
-  // Fetch today's contemplation (independent of conversations). First
-  // request of the day triggers LLM generation on the backend (~2s);
-  // every subsequent call same day is cached and near-instant.
+  // Fetch today's contemplation. On any failure, show a hardcoded
+  // fallback so the card never gets stuck on the loading skeleton.
   useEffect(() => {
     let cancelled = false;
+    const FALLBACK: Contemplation = {
+      date: new Date().toISOString().slice(0, 10),
+      quote: "Silence is the true teaching. Sit quietly, and notice what remains when thought subsides.",
+      question: "Who is the one who is aware right now?",
+    };
     contemplationAPI
       .getToday()
       .then((c) => {
         if (!cancelled) setContemplation(c);
       })
       .catch((err) => {
-        // Non-fatal: the pill falls back to a default prompt below.
         console.error("Failed to fetch today's contemplation:", err);
+        if (!cancelled) setContemplation(FALLBACK);
       });
     return () => {
       cancelled = true;

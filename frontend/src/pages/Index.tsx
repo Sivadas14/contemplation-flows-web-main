@@ -188,7 +188,7 @@ const Index = () => {
             </div>
           ) : (
             <>
-              <h2 className="text-xl md:text-2xl font-heading text-brand-heading mb-6 text-center">Previous Conversations</h2>
+              <h2 className="text-xl md:text-2xl font-heading text-brand-heading mb-6 text-center">Your Conversations</h2>
               <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
                 {conversations.map((conversation) => (
                   <div

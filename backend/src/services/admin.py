@@ -28,11 +28,12 @@ from src.db import (
     Conversation,
     ContentType,
     DocumentStatus,
-    Subscription
+    Subscription,
+    UserRole,
 )
 from src import wire as w
 from src.dependencies import get_current_user
-from src.settings import get_supabase_client, get_supabase_admin_client, get_llm
+from src.settings import get_supabase_client, get_supabase_admin_client, get_llm, get_settings, Settings
 from src.chunking import extract_pdf_text
 from src.db import DocumentChunk
 
@@ -495,3 +496,56 @@ async def upload_source_pdfs(
         await doc.to_bm()
         for doc in created_docs
     ]
+
+
+# ============================================================================
+# 6. ADMIN BOOTSTRAP — promote a user to ADMIN role
+# ============================================================================
+
+class MakeAdminRequest(w.BaseModel):
+    email: str
+    admin_secret: str
+
+
+async def make_admin(
+    request: MakeAdminRequest,
+    session: AsyncSession = Depends(get_db_session_fa),
+    settings: Settings = Depends(get_settings),
+) -> w.SuccessResponse:
+    """POST /api/admin/make-admin
+
+    Promotes a user to ADMIN role.  Protected by a shared secret configured
+    via the ASAM_ADMIN_SECRET environment variable in App Runner.
+
+    This endpoint is intentionally unauthenticated so the very first admin
+    can bootstrap their account without needing to already be logged in.
+    """
+    # Verify secret
+    if request.admin_secret != settings.admin_secret:
+        raise HTTPException(status_code=403, detail="Invalid admin secret")
+
+    # Find user by email
+    query = select(DBUserProfile).where(DBUserProfile.email_id == request.email)
+    result = await session.execute(query)
+    user = result.scalar_one_or_none()
+
+    if not user:
+        raise HTTPException(
+            status_code=404,
+            detail=f"No user found with email '{request.email}'. Make sure the account exists (sign in once first)."
+        )
+
+    if user.role == UserRole.ADMIN:
+        return w.SuccessResponse(
+            success=True,
+            message=f"{request.email} is already an ADMIN.",
+        )
+
+    user.role = UserRole.ADMIN
+    await session.commit()
+
+    tu.logger.info(f"[BOOTSTRAP] Promoted {request.email} (id={user.id}) to ADMIN")
+    return w.SuccessResponse(
+        success=True,
+        message=f"Success — {request.email} has been promoted to ADMIN. You can now sign in via /admin/login.",
+    )

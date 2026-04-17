@@ -310,7 +310,7 @@ const AdminLogin: React.FC = () => {
                                                 type="text"
                                                 value={otp}
                                                 onChange={(e) => setOtp(e.target.value.replace(/\D/g, '').slice(0, 8))}
-                                                placeholder="Enter 6-digit code"
+                                                placeholder="Enter 8-digit code"
                                                 className="mt-1 text-center tracking-widest text-lg font-mono bg-gray-900 border-gray-800 text-white focus:border-orange-500"
                                                 disabled={isLoading}
                                                 maxLength={8}

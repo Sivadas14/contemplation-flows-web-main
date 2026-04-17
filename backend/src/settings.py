@@ -35,6 +35,9 @@ class Settings(BaseSettings):
     max_upload_file_size: int = 25
     allowed_upload_extensions: str = "pdf/txt/docx"
     generated_content_retention_days: int = 30
+    # Secret used by the /api/admin/make-admin bootstrap endpoint.
+    # Set ASAM_ADMIN_SECRET in App Runner environment variables.
+    admin_secret: str = "change-me-in-production"
 
     # model settings
     openai_token: str = "dummy_token"

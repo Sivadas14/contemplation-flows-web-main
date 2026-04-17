@@ -168,7 +168,8 @@ def get_app() -> FastAPI:
         return {
             "status": "healthy",
             "timestamp": tu.SimplerTimes.get_now_datetime().isoformat(),
-            "service": "Arunachala Samudra API"
+            "service": "Arunachala Samudra API",
+            "version": os.getenv("GIT_SHA", "unknown"),
         }
 
     def custom_openapi():

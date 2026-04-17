@@ -35,10 +35,14 @@ RUN npm run build
 # Stage 2: Build the final backend image with frontend
 FROM python:3.11-slim
 
+# Accept git SHA so the health endpoint can report which version is running
+ARG GIT_SHA=unknown
+
 # Set environment variables
 ENV PYTHONUNBUFFERED=1 \
     PYTHONDONTWRITEBYTECODE=1 \
-    PATH="/app/.venv/bin:$PATH"
+    PATH="/app/.venv/bin:$PATH" \
+    GIT_SHA=$GIT_SHA
 
 # Install uv from the official Astral image
 COPY --from=ghcr.io/astral-sh/uv:latest /uv /uvx /bin/

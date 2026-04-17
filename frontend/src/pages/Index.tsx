@@ -7,16 +7,52 @@ import { ArrowRight, MessageCircle, Heart, MessageSquare, HelpCircle, Plus } fro
 import UserMenu from "@/components/UserMenu";
 import AtmosphericEntry from "@/components/AtmosphericEntry";
 import TeachingsSection from "@/components/TeachingsSection";
-import { chatAPI, contemplationAPI } from "@/apis/api";
-import { type Conversation, type Contemplation } from "@/apis/wire";
+import { chatAPI } from "@/apis/api";
+import { type Conversation } from "@/apis/wire";
+
+// ─── Static daily contemplations (rotate by day-of-week, no API needed) ─────
+interface DailyQuote { quote: string; question: string; }
+const DAILY_QUOTES: DailyQuote[] = [
+  { // Sunday
+    quote: "Silence is the true teaching. Sit quietly, and notice what remains when thought subsides.",
+    question: "Who is the one who is aware right now?",
+  },
+  { // Monday
+    quote: "The Self is always present. What you seek, you already are. Turn attention inward and rest there.",
+    question: "What is present before the very first thought of the day arises?",
+  },
+  { // Tuesday
+    quote: "Thoughts arise and subside in the vast space of awareness. You are that space — not the thoughts.",
+    question: "To whom do these thoughts appear?",
+  },
+  { // Wednesday
+    quote: "The ego is like a wave that imagines itself separate from the ocean. Inquiry dissolves this imagining.",
+    question: "Can you find the 'I' that claims to have problems?",
+  },
+  { // Thursday
+    quote: "There is no distance between you and the Self. The very act of seeking obscures what is already here.",
+    question: "What is the awareness that witnesses both stillness and movement?",
+  },
+  { // Friday
+    quote: "The Heart is not a place — it is the source from which all experience rises and into which it sets.",
+    question: "Where does the sense of 'I am' come from?",
+  },
+  { // Saturday
+    quote: "Peace is your natural state. It is only the mind's movements that veil it. Inquire and the veil lifts.",
+    question: "What remains when you stop following the next thought?",
+  },
+];
+
+function getTodayQuote(): DailyQuote {
+  return DAILY_QUOTES[new Date().getDay()];
+}
 
 const Index = () => {
   const [query, setQuery] = useState("");
   const [conversations, setConversations] = useState<Conversation[]>([]);
   const [isLoadingConversations, setIsLoadingConversations] = useState(true);
-  // Today's Contemplation — fetched from backend, same for every user each
-  // day (IST). Used to build the first quick-prompt button's prompt text.
-  const [contemplation, setContemplation] = useState<Contemplation | null>(null);
+  // Static daily contemplation — no API call, always available instantly
+  const contemplation = getTodayQuote();
   const navigate = useNavigate();
 
   // Fetch conversations on component mount
@@ -36,29 +72,6 @@ const Index = () => {
     };
 
     fetchConversations();
-  }, []);
-
-  // Fetch today's contemplation. On any failure, show a hardcoded
-  // fallback so the card never gets stuck on the loading skeleton.
-  useEffect(() => {
-    let cancelled = false;
-    const FALLBACK: Contemplation = {
-      date: new Date().toISOString().slice(0, 10),
-      quote: "Silence is the true teaching. Sit quietly, and notice what remains when thought subsides.",
-      question: "Who is the one who is aware right now?",
-    };
-    contemplationAPI
-      .getToday()
-      .then((c) => {
-        if (!cancelled) setContemplation(c);
-      })
-      .catch((err) => {
-        console.error("Failed to fetch today's contemplation:", err);
-        if (!cancelled) setContemplation(FALLBACK);
-      });
-    return () => {
-      cancelled = true;
-    };
   }, []);
 
 
@@ -91,9 +104,7 @@ const Index = () => {
   };
 
   // Today's Contemplation: prompt text to send to chat when user taps "Begin Inquiry"
-  const todaysPrompt = contemplation
-    ? `${contemplation.quote}\n\n${contemplation.question}`
-    : "What does Ramana Maharshi teach about turning attention inward?";
+  const todaysPrompt = `${contemplation.quote}\n\n${contemplation.question}`;
 
   const quickPrompts = [
     {
@@ -168,23 +179,12 @@ const Index = () => {
               </span>
             </div>
 
-            {contemplation ? (
-              <>
-                <p className="text-brand-heading font-heading text-base md:text-lg leading-relaxed mb-4">
-                  "{contemplation.quote}"
-                </p>
-                <p className="text-brand-body font-body text-sm md:text-base italic border-t border-orange-100 pt-3">
-                  ✦ {contemplation.question}
-                </p>
-              </>
-            ) : (
-              /* Loading skeleton */
-              <div className="space-y-2 animate-pulse">
-                <div className="h-4 bg-orange-100 rounded w-full" />
-                <div className="h-4 bg-orange-100 rounded w-4/5" />
-                <div className="h-3 bg-orange-100 rounded w-3/5 mt-3" />
-              </div>
-            )}
+            <p className="text-brand-heading font-heading text-base md:text-lg leading-relaxed mb-4">
+              "{contemplation.quote}"
+            </p>
+            <p className="text-brand-body font-body text-sm md:text-base italic border-t border-orange-100 pt-3">
+              ✦ {contemplation.question}
+            </p>
 
             <div className="mt-4 flex justify-end">
               <span className="text-xs text-brand-button font-body font-medium">

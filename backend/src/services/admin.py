@@ -502,7 +502,9 @@ async def upload_source_pdfs(
 # 6. ADMIN BOOTSTRAP — promote a user to ADMIN role
 # ============================================================================
 
-class MakeAdminRequest(w.BaseModel):
+from pydantic import BaseModel as PydanticBaseModel
+
+class MakeAdminRequest(PydanticBaseModel):
     email: str
     admin_secret: str
 

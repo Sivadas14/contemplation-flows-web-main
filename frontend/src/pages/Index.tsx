@@ -164,6 +164,19 @@ const Index = () => {
           <h1 className="text-4xl md:text-6xl font-heading text-brand-heading mb-4 md:mb-8">
             Wisdom AI
           </h1>
+          {/* ── DEPLOYMENT PROBE ── remove after confirming new code is live */}
+          <div style={{
+            background: "#c0392b",
+            color: "white",
+            padding: "8px 16px",
+            borderRadius: "6px",
+            fontSize: "13px",
+            fontFamily: "monospace",
+            display: "inline-block",
+            marginBottom: "8px",
+          }}>
+            BUILD: 17-APR-2026-v3
+          </div>
         </div>
 
         {/* Today's Contemplation Card */}

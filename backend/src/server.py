@@ -15,7 +15,7 @@ from tuneapi import tu
 import os
 import asyncio
 from fastapi import FastAPI, Depends
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
 from contextlib import asynccontextmanager
 from sqlalchemy.ext.asyncio import async_sessionmaker
@@ -292,9 +292,22 @@ def get_app() -> FastAPI:
     # Catch-all route for SPA (Single Page Application) - must be last
     ui_path = tu.joinp(tu.folder(__file__), "ui")
 
+    # ── Permanent 301 redirects for typos / old URLs ────────────────────────
+    # Key   = the wrong path that was published / indexed by Google
+    # Value = the correct canonical path users should land on
+    REDIRECTS_301: dict[str, str] = {
+        "raman-maharshi-core-teachings":  "/ramana-maharshi-core-teachings",
+        # Add more typo or legacy URLs here as needed, e.g.:
+        # "ramana-maharshi-teachings":   "/ramana-maharshi-core-teachings",
+    }
+
     @app.get("/{full_path:path}")
     async def catch_all(full_path: str):
         """Serve the React app and its assets from the root."""
+        # 0. Permanent redirects — typos / old URLs that got indexed or shared
+        if full_path in REDIRECTS_301:
+            return RedirectResponse(url=REDIRECTS_301[full_path], status_code=301)
+
         # 1. Protection for API routes - if it starts with api/ but didn't match a route above, it's a 404
         if full_path.startswith("api/"):
             return JSONResponse(status_code=404, content={"error": "Not found"})

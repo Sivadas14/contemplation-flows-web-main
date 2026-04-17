@@ -529,9 +529,11 @@ async def make_admin(
 
     # Find user by email
     try:
-        query = select(DBUserProfile).where(DBUserProfile.email_id == request.email)
+        query = select(DBUserProfile).where(DBUserProfile.email_id == request.email).limit(5)
         result = await session.execute(query)
-        user = result.scalar_one_or_none()
+        users = result.scalars().all()
+        user = users[0] if users else None
+        tu.logger.info(f"[MAKE_ADMIN] Found {len(users)} profile(s) for {request.email}")
     except Exception as e:
         tu.logger.error(f"[MAKE_ADMIN] DB query failed: {e}")
         raise HTTPException(status_code=500, detail=f"Database error: {str(e)}")
@@ -542,18 +544,23 @@ async def make_admin(
             detail=f"No user found with email '{request.email}'. Sign in once via the normal login page first, then retry."
         )
 
-    if user.role == UserRole.ADMIN:
-        return JSONResponse({"success": True, "message": f"{request.email} is already an ADMIN."})
-
     try:
-        user.role = UserRole.ADMIN
+        promoted = 0
+        for u in users:
+            if u.role != UserRole.ADMIN:
+                u.role = UserRole.ADMIN
+                promoted += 1
+                tu.logger.info(f"[BOOTSTRAP] Promoted {request.email} (id={u.id}) to ADMIN")
         await session.commit()
     except Exception as e:
         await session.rollback()
         tu.logger.error(f"[MAKE_ADMIN] Commit failed: {e}")
         raise HTTPException(status_code=500, detail=f"Failed to update role: {str(e)}")
 
-    tu.logger.info(f"[BOOTSTRAP] Promoted {request.email} (id={user.id}) to ADMIN")
+    if promoted == 0:
+        return JSONResponse({"success": True, "message": f"{request.email} is already an ADMIN on all {len(users)} profile(s)."})
+
+    tu.logger.info(f"[BOOTSTRAP] Done — promoted {promoted} of {len(users)} profile(s)")
     return JSONResponse({
         "success": True,
         "message": f"Success — {request.email} has been promoted to ADMIN. You can now sign in via /admin/login."

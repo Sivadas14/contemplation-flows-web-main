@@ -2,12 +2,13 @@ import { useState, useEffect, useCallback, useRef } from "react";
 import { useLocation, useNavigate, useParams } from "react-router-dom";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import { Pencil, Save, Volume2, Mic, ArrowRight, ArrowLeft, Image as ImageIcon, Music, Video, Download, Loader2, Sparkles, Brain, Timer, BookOpen, PlayIcon, MusicIcon, LayoutGrid, X } from "lucide-react";
+import { Pencil, Save, Volume2, Mic, ArrowRight, ArrowLeft, Image as ImageIcon, Music, Video, Download, Loader2, Sparkles, Brain, Timer, BookOpen, PlayIcon, MusicIcon, LayoutGrid, X, Heart } from "lucide-react";
 import { teachingTopics, personalTopics } from "@/data/chatTopics";
 import ChatMessage from "@/components/ChatMessage";
 import ExploreMore from "@/components/ExploreMore";
 import InlineMeditationCreator from "@/components/InlineMeditationCreator";
 import UserMenu from "@/components/UserMenu";
+import TeachingsSection from "@/components/TeachingsSection";
 import { InlineMediaPlayer } from '@/components/InlineMediaPlayer';
 import { AddonsModal } from "@/components/billing/AddonsModal";
 import { chatAPI, contentAPI } from "@/apis/api";
@@ -16,6 +17,42 @@ import { toast } from "sonner";
 import { getFullStorageUrl } from "@/lib/storage";
 import { downloadFromUrl } from "@/lib/download";
 import type { Message as APIMessage, Conversation, ConversationDetailResponse, ContentGeneration } from "@/apis/wire";
+
+// ─── Static daily contemplations (rotate by day-of-week) ─────────────────────
+interface DailyQuote { quote: string; question: string; }
+const DAILY_QUOTES: DailyQuote[] = [
+  { // Sunday
+    quote: "Silence is the true teaching. Sit quietly, and notice what remains when thought subsides.",
+    question: "Who is the one who is aware right now?",
+  },
+  { // Monday
+    quote: "The Self is always present. What you seek, you already are. Turn attention inward and rest there.",
+    question: "What is present before the very first thought of the day arises?",
+  },
+  { // Tuesday
+    quote: "Thoughts arise and subside in the vast space of awareness. You are that space — not the thoughts.",
+    question: "To whom do these thoughts appear?",
+  },
+  { // Wednesday
+    quote: "The ego is like a wave that imagines itself separate from the ocean. Inquiry dissolves this imagining.",
+    question: "Can you find the 'I' that claims to have problems?",
+  },
+  { // Thursday
+    quote: "There is no distance between you and the Self. The very act of seeking obscures what is already here.",
+    question: "What is the awareness that witnesses both stillness and movement?",
+  },
+  { // Friday
+    quote: "The Heart is not a place — it is the source from which all experience rises and into which it sets.",
+    question: "Where does the sense of 'I am' come from?",
+  },
+  { // Saturday
+    quote: "Peace is your natural state. It is only the mind's movements that veil it. Inquire and the veil lifts.",
+    question: "What remains when you stop following the next thought?",
+  },
+];
+function getTodayQuote(): DailyQuote {
+  return DAILY_QUOTES[new Date().getDay()];
+}
 
 interface Message {
   id: string;
@@ -1055,56 +1092,105 @@ const Chat = () => {
       {/* Messages Container */}
       <div className="flex-1 p-4 md:p-6 max-w-[816px] mx-auto w-full">
 
-        {!isLoadingConversation && messages.length === 0 && (
-          <div className="flex flex-col items-center w-full max-w-2xl mx-auto px-4 pt-8 pb-4">
-            {/* Heading */}
-            <h1 className="text-3xl md:text-4xl font-heading font-bold text-gray-800 mb-1 text-center">
-              Arunachala Samudra
-            </h1>
-            <p className="text-gray-500 mb-6 text-sm md:text-base text-center">
-              Ask anything about Ramana Maharshi's teachings, or choose a topic below
-            </p>
+        {!isLoadingConversation && messages.length === 0 && (() => {
+          const contemplation = getTodayQuote();
+          const todaysPrompt = `${contemplation.quote}\n\n${contemplation.question}`;
+          return (
+            <div className="flex flex-col items-center w-full max-w-2xl mx-auto px-4 pt-8 pb-4">
+              {/* Heading */}
+              <h1 className="text-3xl md:text-4xl font-heading font-bold text-gray-800 mb-1 text-center">
+                Arunachala Samudra
+              </h1>
+              <p className="text-gray-500 mb-6 text-sm md:text-base text-center">
+                Ask anything about Ramana Maharshi's teachings, or choose a topic below
+              </p>
 
-            {/* Tabs + chips */}
-            <div className="w-full">
-              <div className="flex border-b border-gray-200 mb-4">
-                <button
-                  onClick={() => setTopicTab("teachings")}
-                  className={`px-4 py-2 text-sm font-medium border-b-2 transition-colors ${
-                    topicTab === "teachings"
-                      ? "border-orange-500 text-orange-600"
-                      : "border-transparent text-gray-500 hover:text-gray-700"
-                  }`}
-                >
-                  Ramana's Teachings
-                </button>
-                <button
-                  onClick={() => setTopicTab("personal")}
-                  className={`px-4 py-2 text-sm font-medium border-b-2 transition-colors ${
-                    topicTab === "personal"
-                      ? "border-orange-500 text-orange-600"
-                      : "border-transparent text-gray-500 hover:text-gray-700"
-                  }`}
-                >
-                  What I'm Facing
-                </button>
+              {/* ── DEPLOYMENT PROBE ── remove after confirming new code is live */}
+              <div style={{
+                background: "#c0392b",
+                color: "white",
+                padding: "6px 14px",
+                borderRadius: "6px",
+                fontSize: "12px",
+                fontFamily: "monospace",
+                display: "inline-block",
+                marginBottom: "16px",
+              }}>
+                BUILD: 17-APR-2026-v4
               </div>
 
-              {/* Topic chips */}
-              <div className="flex flex-wrap gap-2">
-                {(topicTab === "teachings" ? teachingTopics : personalTopics).map((topic, i) => (
+              {/* Today's Contemplation Card */}
+              <div className="w-full mb-6">
+                <div
+                  onClick={() => handleSendMessage(todaysPrompt)}
+                  className="cursor-pointer rounded-2xl border border-orange-200 bg-gradient-to-br from-orange-50 to-amber-50 shadow-md hover:shadow-lg transition-all duration-200 hover:scale-[1.01] hover:border-orange-400 p-5"
+                >
+                  <div className="flex items-center gap-2 mb-3">
+                    <Heart className="w-4 h-4 text-orange-500 flex-shrink-0" />
+                    <span className="text-xs font-semibold tracking-widest uppercase text-orange-500 font-body">
+                      Today's Contemplation
+                    </span>
+                  </div>
+                  <p className="text-gray-800 font-heading text-base md:text-lg leading-relaxed mb-4">
+                    "{contemplation.quote}"
+                  </p>
+                  <p className="text-gray-600 font-body text-sm md:text-base italic border-t border-orange-100 pt-3">
+                    ✦ {contemplation.question}
+                  </p>
+                  <div className="mt-4 flex justify-end">
+                    <span className="text-xs text-orange-500 font-body font-medium">
+                      Begin Inquiry →
+                    </span>
+                  </div>
+                </div>
+              </div>
+
+              {/* Sacred Teachings Section */}
+              <div className="w-full mb-6">
+                <TeachingsSection onExplore={(prompt) => handleSendMessage(prompt)} />
+              </div>
+
+              {/* Tabs + chips */}
+              <div className="w-full">
+                <div className="flex border-b border-gray-200 mb-4">
                   <button
-                    key={i}
-                    onClick={() => handleSendMessage(topic.question)}
-                    className="px-3 py-1.5 text-sm rounded-full border border-orange-200 bg-orange-50 text-orange-800 hover:bg-orange-100 hover:border-orange-400 hover:shadow-sm transition-all duration-150"
+                    onClick={() => setTopicTab("teachings")}
+                    className={`px-4 py-2 text-sm font-medium border-b-2 transition-colors ${
+                      topicTab === "teachings"
+                        ? "border-orange-500 text-orange-600"
+                        : "border-transparent text-gray-500 hover:text-gray-700"
+                    }`}
                   >
-                    {topic.label}
+                    Ramana's Teachings
                   </button>
-                ))}
+                  <button
+                    onClick={() => setTopicTab("personal")}
+                    className={`px-4 py-2 text-sm font-medium border-b-2 transition-colors ${
+                      topicTab === "personal"
+                        ? "border-orange-500 text-orange-600"
+                        : "border-transparent text-gray-500 hover:text-gray-700"
+                    }`}
+                  >
+                    What I'm Facing
+                  </button>
+                </div>
+
+                {/* Topic chips */}
+                <div className="flex flex-wrap gap-2">
+                  {(topicTab === "teachings" ? teachingTopics : personalTopics).map((topic, i) => (
+                    <button
+                      key={i}
+                      onClick={() => handleSendMessage(topic.question)}
+                      className="px-3 py-1.5 text-sm rounded-full border border-orange-200 bg-orange-50 text-orange-800 hover:bg-orange-100 hover:border-orange-400 hover:shadow-sm transition-all duration-150"
+                    >
+                      {topic.label}
+                    </button>
+                  ))}
+                </div>
               </div>
             </div>
-          </div>
-        )}
+          );
+        })()}
 
         {!isLoadingConversation && messages.length > 0 && messages.map((message, index) => {
           const latestAssistantMessageIndex = messages.map((msg, idx) => ({ msg, idx }))

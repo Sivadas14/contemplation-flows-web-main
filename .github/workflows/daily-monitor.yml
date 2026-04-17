@@ -1,0 +1,44 @@
+name: Daily Health Monitor
+
+on:
+  # Run every day at 8:00 AM IST (02:30 UTC)
+  schedule:
+    - cron: "30 2 * * *"
+
+  # Also allow manual run from GitHub Actions tab at any time
+  workflow_dispatch:
+
+jobs:
+  monitor:
+    name: Check All Systems
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install dependencies
+        run: pip install requests
+
+      - name: Run health monitor
+        id: monitor
+        run: python scripts/monitor.py
+        # Exit code 1 from the script = failures found
+        # GitHub will mark the job as failed and email the repo owner
+
+      - name: Post summary on failure
+        if: failure()
+        run: |
+          echo "::error::One or more health checks failed. Review the output above for details."
+          echo ""
+          echo "Quick links:"
+          echo "  App:       https://www.arunachalasamudra.co.in"
+          echo "  Health:    https://www.arunachalasamudra.co.in/health"
+          echo "  App Runner: https://console.aws.amazon.com/apprunner"
+          echo "  OpenAI:    https://platform.openai.com/usage"
+          echo "  Polar:     https://polar.sh"

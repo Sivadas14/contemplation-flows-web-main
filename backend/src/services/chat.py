@@ -533,28 +533,30 @@ async def _llm_chat_streaming_optimized(
     async with profile_operation("thread_preparation") as op:
         # Check if chunks were found
         if not chunks or len(chunks) == 0:
-            tu.logger.warning(f"No sufficiently relevant chunks found for query: {user_message}")
-            # No relevant Ramana library content found — return a firm, on-brand refusal
-            # rather than allowing the LLM to draw on general knowledge.
+            tu.logger.warning(f"No sufficiently relevant passages found for query: {user_message}")
+            # No relevant Ramana library content found — ask the LLM for a warm, on-brand
+            # response that never reveals internal terminology.
             master_thread.append(
                 tt.human(
                     dedent(
                         f"""
-                        CONTEXT: No sufficiently relevant passages were found in the Ramana Maharshi
-                        library for this query (similarity threshold not met).
+                        The library did not return a relevant passage for this question.
 
-                        INSTRUCTIONS:
-                        - If this is a simple greeting (hi, hello, namaste, etc.), respond briefly
-                          and warmly in the spirit of Ramana's silence, but do NOT introduce
-                          unrelated spiritual content.
-                        - For all other questions or topics, you MUST respond with a polite,
-                          compassionate refusal that stays true to your role as a Ramana library
-                          guide. Explain that you can only draw from Sri Ramana Maharshi's
-                          authenticated teachings and that no relevant passage was found for this
-                          particular question. Encourage the seeker to rephrase or explore the
-                          library directly at Ramanasramam.org.
-                        - You MUST NOT answer using general knowledge, general Advaita teaching,
-                          or any content outside the Ramana library.
+                        INSTRUCTIONS — respond as a warm, humble teacher:
+                        - If this is a simple greeting (hi, hello, namaste, etc.), reply briefly
+                          and warmly in the spirit of Ramana's silence. Do not add spiritual content.
+                        - For all other questions, write a short, compassionate response that:
+                            * Acknowledges the question with genuine warmth.
+                            * Explains, in natural flowing prose, that this particular topic is not
+                              covered in the passages currently available to you.
+                            * Gently suggests the seeker explore the Arunachala Samudra library
+                              (accessible from the app) or visit the Ashram's own library at
+                              Ramanasramam.org for deeper study of this text.
+                            * Invites them to ask another question or try rephrasing.
+                        - NEVER use words like "chunks", "database", "vector", "threshold",
+                          "similarity", "retrieval", or any technical term whatsoever.
+                        - Keep the tone gentle, devotional, and encouraging — as Bhagavan himself
+                          would: direct the seeker inward, not to a system.
 
                         User's message: {user_message}
                         """
@@ -563,33 +565,34 @@ async def _llm_chat_streaming_optimized(
             )
         else:
             # Chunks found - use strict RAG approach
-            chunk_text = "Here are the ONLY sources of information you can use to answer the question. You MUST ONLY use information from these chunks:\n\n"
+            chunk_text = "Here are the ONLY passages you may use to answer the question:\n\n"
             for c_content, c_fname in chunks:
-                chunk_text += f"<filename> {c_fname} </filename>\n"
-                chunk_text += f"<content> {c_content} </content>\n"
+                chunk_text += f"<source> {c_fname} </source>\n"
+                chunk_text += f"<passage> {c_content} </passage>\n"
                 chunk_text += f"--------------------------------\n"
-            
-            master_thread.append(tt.human("Find similar chunks from the database"))
+
+            master_thread.append(tt.human("Retrieve relevant passages from the library"))
             master_thread.append(tt.assistant(chunk_text))
             master_thread.append(
                 tt.human(
                     dedent(
                         f"""
                         CRITICAL INSTRUCTIONS:
-                        - You MUST ONLY use information from the chunks provided above
-                        - You MUST NOT use any general knowledge, training data, or information from outside these chunks
-                        - If the chunks do not contain enough information to fully answer the question, you must say so explicitly
-                        - NEVER make up information or use knowledge from your training data
-                        - Base your response ONLY on the content in the chunks above
-                        
-                        You are given a conversation till now and relevant chunks from the database.
-                        Your task is to generate a response to the user's message using ONLY the information from the chunks provided.
-                        You will respond in a first person narrative conversational way as if you have understood the idea
-                        and are now sharing your thoughts. You will never bring up chunks to the user.
-                        
+                        - You MUST ONLY use information from the passages provided above.
+                        - You MUST NOT use any general knowledge, training data, or information from outside these passages.
+                        - If the passages do not contain enough information to fully answer the question,
+                          respond warmly and humbly, suggest the seeker explore the library or Ramanasramam.org,
+                          and never use technical language or mention retrieval systems.
+                        - NEVER make up information or use knowledge from your training data.
+                        - NEVER use the word "chunks" or any technical retrieval term in your response.
+
+                        You are a wisdom guide. Respond in a warm, first-person narrative way, as if you have
+                        deeply understood the teaching and are sharing it from the heart. Cite the source text
+                        naturally when relevant (e.g. "As Bhagavan says in 'Who Am I?'...").
+
                         User's message: {user_message}
-                        
-                        Generate a thoughtful response using ONLY the information from the chunks above.
+
+                        Generate a thoughtful, compassionate response using ONLY the passages above.
                         """
                     )
                 )
@@ -988,16 +991,20 @@ async def chat_completions(
                         Sri Ramanasramam, Tiruvannamalai.
 
                         STRICT GUARDRAILS — follow these without exception:
-                        1. You MUST answer ONLY from the document chunks provided in the conversation.
+                        1. You MUST answer ONLY from the passages provided in this conversation.
                         2. You MUST NOT draw on general knowledge, your training data, other spiritual traditions,
-                           or any source outside the provided chunks.
-                        3. When you quote or paraphrase, always cite the source filename given in the chunk.
-                        4. If the provided chunks do not contain enough information to answer the question,
-                           say so clearly and suggest the seeker explore the Ramana library directly.
+                           or any source outside the provided passages.
+                        3. When you quote or paraphrase, always cite the source text given.
+                        4. If the provided passages do not contain enough information to answer the question,
+                           respond with warmth and humility — never mention technical terms — and gently
+                           invite the seeker to explore the topic in the Arunachala Samudra library or at
+                           Ramanasramam.org.
                         5. NEVER speculate, NEVER hallucinate, NEVER present general Advaita or Neo-Advaita
-                           content unless it is directly present in the retrieved chunks.
+                           content unless it is directly present in the retrieved passages.
                         6. You may respond warmly to greetings, but keep even conversational replies
                            anchored to Ramana's spirit of silence, self-inquiry, and surrender.
+                        7. NEVER use the word "chunks" or any technical database or retrieval terminology
+                           in your responses. Speak only as a wise, compassionate teacher would.
                         """
                     ).strip()
                 ),

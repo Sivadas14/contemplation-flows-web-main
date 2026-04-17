@@ -503,6 +503,7 @@ async def upload_source_pdfs(
 # ============================================================================
 
 from pydantic import BaseModel as PydanticBaseModel
+from fastapi.responses import JSONResponse
 
 class MakeAdminRequest(PydanticBaseModel):
     email: str
@@ -512,8 +513,7 @@ class MakeAdminRequest(PydanticBaseModel):
 async def make_admin(
     request: MakeAdminRequest,
     session: AsyncSession = Depends(get_db_session_fa),
-    settings: Settings = Depends(get_settings),
-) -> w.SuccessResponse:
+) -> JSONResponse:
     """POST /api/admin/make-admin
 
     Promotes a user to ADMIN role.  Protected by a shared secret configured
@@ -522,32 +522,39 @@ async def make_admin(
     This endpoint is intentionally unauthenticated so the very first admin
     can bootstrap their account without needing to already be logged in.
     """
-    # Verify secret
-    if request.admin_secret != settings.admin_secret:
+    # Verify secret — call get_settings() directly, no Depends needed
+    cfg = get_settings()
+    if request.admin_secret != cfg.admin_secret:
         raise HTTPException(status_code=403, detail="Invalid admin secret")
 
     # Find user by email
-    query = select(DBUserProfile).where(DBUserProfile.email_id == request.email)
-    result = await session.execute(query)
-    user = result.scalar_one_or_none()
+    try:
+        query = select(DBUserProfile).where(DBUserProfile.email_id == request.email)
+        result = await session.execute(query)
+        user = result.scalar_one_or_none()
+    except Exception as e:
+        tu.logger.error(f"[MAKE_ADMIN] DB query failed: {e}")
+        raise HTTPException(status_code=500, detail=f"Database error: {str(e)}")
 
     if not user:
         raise HTTPException(
             status_code=404,
-            detail=f"No user found with email '{request.email}'. Make sure the account exists (sign in once first)."
+            detail=f"No user found with email '{request.email}'. Sign in once via the normal login page first, then retry."
         )
 
     if user.role == UserRole.ADMIN:
-        return w.SuccessResponse(
-            success=True,
-            message=f"{request.email} is already an ADMIN.",
-        )
+        return JSONResponse({"success": True, "message": f"{request.email} is already an ADMIN."})
 
-    user.role = UserRole.ADMIN
-    await session.commit()
+    try:
+        user.role = UserRole.ADMIN
+        await session.commit()
+    except Exception as e:
+        await session.rollback()
+        tu.logger.error(f"[MAKE_ADMIN] Commit failed: {e}")
+        raise HTTPException(status_code=500, detail=f"Failed to update role: {str(e)}")
 
     tu.logger.info(f"[BOOTSTRAP] Promoted {request.email} (id={user.id}) to ADMIN")
-    return w.SuccessResponse(
-        success=True,
-        message=f"Success — {request.email} has been promoted to ADMIN. You can now sign in via /admin/login.",
-    )
+    return JSONResponse({
+        "success": True,
+        "message": f"Success — {request.email} has been promoted to ADMIN. You can now sign in via /admin/login."
+    })

@@ -22,7 +22,7 @@ const Terms = () => {
                         We operate <strong>arunachalasamudra.co.in</strong> and <strong>arunachalasamudra.in</strong>, as well as any other related products and services that refer or link to these legal terms (the '<strong>Legal Terms</strong>') (collectively, the '<strong>Services</strong>').
                     </p>
                     <p className="text-brand-body font-body mb-4 leading-relaxed">
-                        You can contact us by email at <strong>info@arunachalasamudra.in</strong> or by mail to <strong>The Legal Manager, Arunachala Samudra, No 49 Kalakshetra Road, Tiruvanmiyur, Chennai 600041, Tamil Nadu, India</strong>.
+                        You can contact us by email at <strong>info@arunachalasamudra.in</strong> or by mail to <strong>R.S. Das, Manager, Arunachala Samudra, K-303, 49 Kalakshetra Road, Tiruvanmiyur, Chennai – 600041, Tamil Nadu, India</strong>.
                     </p>
                     <p className="text-brand-body font-body mb-4 leading-relaxed">
                         These Legal Terms constitute a legally binding agreement made between you, whether personally or on behalf of an entity ('<strong>you</strong>'), and <strong>Arunachala Samudra</strong>, concerning your access to and use of the Services. You agree that by accessing the Services, you have read, understood, and agreed to be bound by all of these Legal Terms. IF YOU DO NOT AGREE WITH ALL OF THESE LEGAL TERMS, THEN YOU ARE EXPRESSLY PROHIBITED FROM USING THE SERVICES AND YOU MUST DISCONTINUE USE IMMEDIATELY.
@@ -392,8 +392,12 @@ const Terms = () => {
                         WHETHER ARISING UNDER CONTRACT, TORT (INCLUDING NEGLIGENCE), STRICT LIABILITY, STATUTE, OR OTHERWISE, AND WHETHER OR NOT WE HAVE BEEN ADVISED OF THE POSSIBILITY OF SUCH DAMAGES.
                     </p>
                     <p className="text-brand-body font-body mb-4 leading-relaxed">
-                        <strong>AGGREGATE LIABILITY CAP:</strong> TO THE FULLEST EXTENT PERMITTED BY APPLICABLE LAW, OUR TOTAL AGGREGATE LIABILITY TO YOU FOR ANY AND ALL CLAIMS ARISING OUT OF OR RELATING TO THESE LEGAL TERMS OR YOUR USE OF THE SERVICES SHALL IN NO EVENT EXCEED THE GREATER OF: (A) THE TOTAL AMOUNT ACTUALLY PAID BY YOU TO ARUNACHALA SAMUDRA IN THE TWELVE (12) MONTHS IMMEDIATELY PRECEDING THE EVENT GIVING RISE TO THE CLAIM; OR (B) FIVE HUNDRED INDIAN RUPEES (₹500), WHICHEVER IS HIGHER. IF YOU HAVE NOT MADE ANY PAYMENT TO US, OUR TOTAL LIABILITY SHALL NOT EXCEED ₹500.
+                        <strong>AGGREGATE LIABILITY CAP:</strong> TO THE FULLEST EXTENT PERMITTED BY APPLICABLE LAW, OUR TOTAL AGGREGATE LIABILITY TO YOU FOR ANY AND ALL CLAIMS ARISING OUT OF OR RELATING TO THESE LEGAL TERMS OR YOUR USE OF THE SERVICES IS SUBJECT TO THE FOLLOWING:
                     </p>
+                    <ul className="list-disc list-inside ml-4 mb-4 text-brand-body font-body space-y-2">
+                        <li><strong>FREE TIER USERS:</strong> IF YOU ARE USING THE SERVICES UNDER A FREE OR NO-COST PLAN AND HAVE MADE NO PAYMENT TO ARUNACHALA SAMUDRA, OUR TOTAL AGGREGATE LIABILITY TO YOU SHALL BE <strong>NIL</strong>. BY USING THE FREE TIER, YOU EXPRESSLY ACKNOWLEDGE AND ACCEPT THAT YOU HAVE NO MONETARY CLAIM AGAINST ARUNACHALA SAMUDRA UNDER ANY CIRCUMSTANCES.</li>
+                        <li><strong>PAID SUBSCRIBERS:</strong> IF YOU ARE ON A PAID SUBSCRIPTION PLAN, OUR TOTAL AGGREGATE LIABILITY TO YOU SHALL NOT EXCEED THE GREATER OF: (A) THE TOTAL AMOUNT ACTUALLY PAID BY YOU TO ARUNACHALA SAMUDRA IN THE ONE (1) CALENDAR MONTH IMMEDIATELY PRECEDING THE DATE OF THE EVENT GIVING RISE TO THE CLAIM; OR (B) TWO HUNDRED AND FIFTY INDIAN RUPEES (₹250), WHICHEVER IS HIGHER.</li>
+                    </ul>
                     <p className="text-brand-body font-body leading-relaxed">
                         The limitations of liability in this section apply even if any remedy provided fails of its essential purpose. Some jurisdictions do not allow the limitation or exclusion of liability for consequential or incidental damages; in such jurisdictions, our liability shall be limited to the maximum extent permitted by law.
                     </p>
@@ -460,10 +464,10 @@ const Terms = () => {
                         In order to resolve a complaint regarding the Services or to receive further information regarding use of the Services, please contact us at:
                     </p>
                     <div className="text-brand-body font-body ml-4">
-                        <p><strong>The Legal Manager</strong></p>
+                        <p><strong>R.S. Das, Manager</strong></p>
                         <p>Arunachala Samudra</p>
-                        <p>No 49 Kalakshetra Road</p>
-                        <p>Tiruvanmiyur, Chennai 600041</p>
+                        <p>K-303, 49 Kalakshetra Road</p>
+                        <p>Tiruvanmiyur, Chennai – 600041</p>
                         <p>Tamil Nadu, India</p>
                         <p><a href="mailto:info@arunachalasamudra.in" className="text-brand-button hover:underline">info@arunachalasamudra.in</a></p>
                     </div>

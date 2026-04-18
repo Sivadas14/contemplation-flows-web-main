@@ -409,9 +409,9 @@ const Privacy = () => {
                         <strong>Grievance Officer:</strong> In accordance with the DPDP Act and the Information Technology Act 2000, the details of our Grievance Officer are:
                     </p>
                     <div className="bg-gray-50 p-4 rounded-lg mb-4 text-brand-body font-body">
-                        <p><strong>Name:</strong> The Legal Manager</p>
+                        <p><strong>Name:</strong> R.S. Das, Manager</p>
                         <p><strong>Organisation:</strong> Arunachala Samudra</p>
-                        <p><strong>Address:</strong> No 49 Kalakshetra Road, Tiruvanmiyur, Chennai 600041, Tamil Nadu, India</p>
+                        <p><strong>Address:</strong> K-303, 49 Kalakshetra Road, Tiruvanmiyur, Chennai – 600041, Tamil Nadu, India</p>
                         <p><strong>Email:</strong> <a href="mailto:info@arunachalasamudra.in" className="text-brand-button hover:underline">info@arunachalasamudra.in</a></p>
                         <p><strong>Response time:</strong> Within 30 days of receipt of your grievance</p>
                     </div>
@@ -455,10 +455,10 @@ const Privacy = () => {
                         If you have questions, comments, or requests regarding this Privacy Policy or our data practices, please contact us:
                     </p>
                     <div className="bg-gray-50 p-4 rounded-lg mb-4 text-brand-body font-body">
-                        <p><strong>The Legal Manager</strong></p>
+                        <p><strong>R.S. Das, Manager</strong></p>
                         <p>Arunachala Samudra</p>
-                        <p>No 49 Kalakshetra Road</p>
-                        <p>Tiruvanmiyur, Chennai 600041</p>
+                        <p>K-303, 49 Kalakshetra Road</p>
+                        <p>Tiruvanmiyur, Chennai – 600041</p>
                         <p>Tamil Nadu, India</p>
                         <p className="mt-2">Email: <a href="mailto:info@arunachalasamudra.in" className="text-brand-button hover:underline">info@arunachalasamudra.in</a></p>
                     </div>

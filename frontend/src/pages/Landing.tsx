@@ -1095,9 +1095,10 @@ function Footer() {
                 { label: "Arunachala Samudra .in",   href: "https://www.arunachalasamudra.in"                          },
                 { label: "Digital Experience Centre", href: "https://www.arunachalasamudra.in/digital-experience-centre" },
                 { label: "Sacred Teachings",          href: "https://www.arunachalasamudra.in/sacred-teachings"         },
-                { label: "Ramanasramam.org",          href: "https://www.ramanasramam.org"                              },
-                { label: "David Godman",              href: "https://www.davidgodman.org"                               },
-                { label: "Mountain Path Journal",     href: "https://www.mountainpath.org"                              },
+                { label: "Ramanasramam",              href: "https://www.gururamana.org"                                        },
+                { label: "Mountain Path Journal",     href: "https://www.gururamana.org/Resources/mountain-path"            },
+                { label: "David Godman",              href: "https://www.davidgodman.org"                                    },
+                { label: "Paul Brunton",              href: "https://www.paulbrunton.org"                                    },
                 { label: "Arunachala Ashrama NY",     href: "https://www.arunachala.org"        },
               ].map(({ label, href }) => (
                 <li key={label}><a href={href} target="_blank" rel="noopener noreferrer" style={{ fontFamily: T.sans, color: "#8A6D5E", fontSize: "0.85rem" }} className="hover:text-[#C4A892] transition-colors">{label}</a></li>

@@ -19,7 +19,9 @@ logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api/newsletter", tags=["newsletter"])
 
-LOOPS_URL = "https://app.loops.so/api/v1/contacts/create"
+# Loops newsletter-form endpoint — public, no auth needed, uses Form ID
+LOOPS_FORM_ID = "34c57503fff70c6e2f3423db78b59606"
+LOOPS_FORM_URL = f"https://app.loops.so/api/newsletter-form/{LOOPS_FORM_ID}"
 
 
 class SubscribeRequest(BaseModel):
@@ -33,36 +35,29 @@ class SubscribeResponse(BaseModel):
 
 @router.post("/subscribe", response_model=SubscribeResponse)
 async def subscribe(payload: SubscribeRequest):
-    settings = get_settings()
-    headers = {
-        "Authorization": f"ApiKey {settings.loops_api_key}",
-        "Content-Type": "application/json",
-    }
-    body = {
-        "email": str(payload.email),
-        "subscribed": True,
-        "source": "co.in website",
-        "userGroup": "Newsletter",
-    }
-    logger.info("Subscribing %s to Loops", payload.email)
+    """Submit email to Loops via the public newsletter-form endpoint (no API key needed)."""
+    logger.info("Subscribing %s to Loops via form endpoint", payload.email)
     try:
         async with httpx.AsyncClient(timeout=10.0) as client:
-            resp = await client.post(LOOPS_URL, json=body, headers=headers)
+            resp = await client.post(
+                LOOPS_FORM_URL,
+                data={"email": str(payload.email)},
+                headers={"Content-Type": "application/x-www-form-urlencoded"},
+            )
 
         logger.info("Loops response status=%s body=%s", resp.status_code, resp.text[:300])
 
-        if resp.status_code in (200, 201):
-            data = resp.json()
-            if data.get("success") or data.get("id"):
-                return SubscribeResponse(success=True, message="Subscribed successfully.")
-            # success:false usually means duplicate contact
+        data = resp.json()
+        if data.get("success"):
+            return SubscribeResponse(success=True, message="Subscribed successfully.")
+
+        # Duplicate or already subscribed — still a success from user's perspective
+        msg = (data.get("message") or "").lower()
+        if any(w in msg for w in ("already", "exist", "duplicate", "subscribed")):
             return SubscribeResponse(success=True, message="Already subscribed.")
 
-        if resp.status_code == 409:
-            return SubscribeResponse(success=True, message="Already subscribed.")
-
-        logger.error("Loops error %s: %s", resp.status_code, resp.text)
-        raise HTTPException(status_code=502, detail=f"Loops error {resp.status_code}: {resp.text[:200]}")
+        logger.error("Loops form error %s: %s", resp.status_code, resp.text)
+        raise HTTPException(status_code=502, detail=data.get("message", "Unable to subscribe. Please try again."))
 
     except httpx.TimeoutException:
         logger.error("Loops API timed out")
@@ -76,24 +71,18 @@ async def subscribe(payload: SubscribeRequest):
 
 @router.get("/test")
 async def test_loops():
-    """Diagnostic endpoint — calls Loops with a probe email and returns the raw response."""
-    settings = get_settings()
-    headers = {
-        "Authorization": f"ApiKey {settings.loops_api_key}",
-        "Content-Type": "application/json",
-    }
-    body = {
-        "email": "probe@arunachalasamudra.co.in",
-        "subscribed": True,
-        "source": "diagnostic-test",
-    }
+    """Diagnostic: submits a probe email to Loops and returns the raw response."""
     try:
         async with httpx.AsyncClient(timeout=10.0) as client:
-            resp = await client.post(LOOPS_URL, json=body, headers=headers)
+            resp = await client.post(
+                LOOPS_FORM_URL,
+                data={"email": "probe@arunachalasamudra.co.in"},
+                headers={"Content-Type": "application/x-www-form-urlencoded"},
+            )
         return {
+            "form_id": LOOPS_FORM_ID,
             "loops_status": resp.status_code,
             "loops_body": resp.json(),
-            "api_key_prefix": settings.loops_api_key[:8] + "...",
         }
     except Exception as e:
         return {"error": str(e)}

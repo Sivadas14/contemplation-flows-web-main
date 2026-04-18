@@ -2,7 +2,9 @@ import React, { useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import { Mail, Key } from "lucide-react";
 import { useAuth } from "@/contexts/AuthContext";
-import AtmosphericEntry from "@/components/AtmosphericEntry";
+// AtmosphericEntry removed — it looked identical to the Landing page intro and
+// confused users coming from the .in site into thinking they were still on the
+// landing page rather than the sign-in page.
 
 // ─── Design tokens (match Landing.tsx) ───────────────────────────────────────
 const T = {
@@ -249,8 +251,6 @@ const SignIn: React.FC = () => {
         fontFamily: T.sans,
       }}
     >
-      <AtmosphericEntry />
-
       {/* Brand */}
       <div style={{ marginBottom: "1.75rem", textAlign: "center" }}>
         <Link to="/" style={{ textDecoration: "none" }}>

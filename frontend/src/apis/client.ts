@@ -127,10 +127,11 @@ apiClient.interceptors.response.use(
                         break;
                     }
 
-                    // Clear Supabase session to prevent PublicRoute from redirecting back
+                    // Clear Supabase session so PublicRoute doesn't keep the stale state
                     try {
-                        // Use a flag to prevent recursion if signOut itself triggers a 401 somehow
-                        if (!window.location.pathname.includes('/signin')) {
+                        const skipPaths = ['/signin', '/admin/login', '/'];
+                        const onSkipPath = skipPaths.some(p => window.location.pathname === p || window.location.pathname.startsWith(p + '/'));
+                        if (!onSkipPath) {
                             console.log('🔵 [apiClient] Triggering Supabase signOut...');
                             await supabase.auth.signOut();
                         }
@@ -138,11 +139,13 @@ apiClient.interceptors.response.use(
                         console.error('Error signing out from Supabase:', e);
                     }
 
-                    // Only redirect if not already on the signin page to avoid loops
-                    if (!window.location.pathname.includes('/signin') &&
-                        !window.location.pathname.includes('/admin/login')) {
-                        console.log('🔄 [apiClient] Redirecting to /signin');
-                        window.location.href = '/signin';
+                    // Redirect to landing page (not signin) so users see the product first.
+                    // Exclude pages that are already public or the landing itself.
+                    const alreadyPublic = ['/', '/signin', '/register', '/admin/login', '/forgot-password', '/reset-password']
+                        .some(p => window.location.pathname === p || window.location.pathname.startsWith(p + '?'));
+                    if (!alreadyPublic) {
+                        console.log('🔄 [apiClient] Session expired — redirecting to landing page');
+                        window.location.href = '/';
                     }
                     break;
                 case 403:

@@ -9,7 +9,9 @@ interface ProtectedRouteProps {
 
 const ProtectedRoute: React.FC<ProtectedRouteProps> = ({
     children,
-    redirectTo = '/signin'
+    redirectTo = '/'     // Redirect to landing page so users from external links
+                         // see the product before being asked to sign in.
+                         // Landing page has prominent Sign In / Register buttons.
 }) => {
     const { isAuthenticated, loading } = useAuth();
     console.log('🔒 [ProtectedRoute] isAuthenticated:', isAuthenticated, loading);

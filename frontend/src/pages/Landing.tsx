@@ -1037,17 +1037,30 @@ function Footer() {
     setSubscribeState("loading");
     setErrorMsg("");
     try {
-      const res = await fetch("/api/newsletter/subscribe", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ email: trimmed }),
-      });
-      if (res.ok) {
+      // Post directly to Loops public newsletter-form endpoint (no backend needed)
+      const formData = new URLSearchParams();
+      formData.append("email", trimmed);
+
+      const res = await fetch(
+        "https://app.loops.so/api/newsletter-form/34c57503fff70c6e2f3423db78b59606",
+        {
+          method: "POST",
+          headers: { "Content-Type": "application/x-www-form-urlencoded" },
+          body: formData.toString(),
+        }
+      );
+      const data = await res.json().catch(() => ({}));
+      if (res.ok && (data.success || data.id)) {
         setSubscribeState("success");
       } else {
-        const data = await res.json().catch(() => ({}));
-        setErrorMsg(data.detail || "Something went wrong. Please try again.");
-        setSubscribeState("error");
+        // Loops returns { success: false, message: "..." } for duplicates — still show success
+        const msg = (data.message || "").toLowerCase();
+        if (msg.includes("already") || msg.includes("exist") || msg.includes("subscribed")) {
+          setSubscribeState("success");
+        } else {
+          setErrorMsg(data.message || "Something went wrong. Please try again.");
+          setSubscribeState("error");
+        }
       }
     } catch {
       setErrorMsg("Network error. Please try again.");

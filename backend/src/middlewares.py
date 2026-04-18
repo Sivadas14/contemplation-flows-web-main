@@ -559,6 +559,8 @@ async def jwt_auth_middleware(request: Request, call_next):
         "/api/auth/login",
         "/api/auth/register",
         "/api/auth/verify-otp",
+        "/api/auth/check-email",  # Used by OTP guard to verify registration
+        "/api/auth/send-otp",
         "/api/profiles/",
         "/api/plans/",
         "/api/plan-prices/",
@@ -574,6 +576,7 @@ async def jwt_auth_middleware(request: Request, call_next):
         "/api/contemplation/",    # Public — same quote for all users, no auth needed
         "/health",
         "/api/admin/make-admin",  # Bootstrap endpoint — secured by admin_secret, not JWT
+        "/api/chat/guest",        # Public guest chat — rate-limited by IP in the endpoint itself
     ]
 
     if any(request.url.path.startswith(path) for path in public_paths):

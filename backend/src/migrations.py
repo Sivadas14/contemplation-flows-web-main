@@ -494,6 +494,38 @@ async def _safe_migration(session: AsyncSession, name: str, func) -> None:
             _log(f"Rollback also failed for {name}: {re}")
 
 
+async def _create_guest_sessions_table(session: AsyncSession) -> None:
+    """
+    Idempotently create the guest_sessions table for IP-based rate limiting
+    of the public /api/chat/guest endpoint.
+
+    Tracks (ip_hash, session_id, session_date, message_count).
+    session_date is a 'YYYY-MM-DD' string in UTC — allows clean daily reset
+    without expensive deletes.
+    """
+    await session.execute(text("""
+        CREATE TABLE IF NOT EXISTS guest_sessions (
+            id            UUID        PRIMARY KEY DEFAULT gen_random_uuid(),
+            created_at    TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+            updated_at    TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+            ip_hash       VARCHAR(64) NOT NULL,
+            session_id    VARCHAR(128) NOT NULL,
+            session_date  VARCHAR(10) NOT NULL,
+            message_count INTEGER NOT NULL DEFAULT 0
+        )
+    """))
+    await session.execute(text("""
+        CREATE INDEX IF NOT EXISTS idx_guest_sessions_ip_hash
+            ON guest_sessions (ip_hash, session_date)
+    """))
+    await session.execute(text("""
+        CREATE INDEX IF NOT EXISTS idx_guest_sessions_session_id
+            ON guest_sessions (session_id, session_date)
+    """))
+    await session.commit()
+    _log("guest_sessions table verified/created.")
+
+
 async def run_migrations(session_factory) -> None:
     """
     Entry point called from server lifespan.
@@ -514,6 +546,7 @@ async def run_migrations(session_factory) -> None:
         # ── Schema migrations first (ALTER / CREATE) ────────────────────────
         await _safe_migration(session, "_add_onboarding_seen_column", _add_onboarding_seen_column)
         await _safe_migration(session, "_create_ramana_images_table", _create_ramana_images_table)
+        await _safe_migration(session, "_create_guest_sessions_table", _create_guest_sessions_table)
         await _safe_migration(session, "_create_daily_contemplations_table", _create_daily_contemplations_table)
         await _safe_migration(session, "_add_razorpay_columns", _add_razorpay_columns)
         await _safe_migration(session, "_add_content_generation_status", _add_content_generation_status)

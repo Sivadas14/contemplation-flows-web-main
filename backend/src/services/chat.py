@@ -1003,10 +1003,10 @@ async def chat_completions(
 # GUEST CHAT  (no authentication required, stateless, rate-limited)
 # ─────────────────────────────────────────────────────────────────────────────
 
-# Simple in-memory rate limiter: {session_id: message_count}
-# Resets on server restart, which is acceptable for a free-trial feature.
-_GUEST_SESSION_COUNTS: dict[str, int] = {}
-GUEST_MESSAGE_LIMIT = 5
+import hashlib
+import datetime as _dt
+
+GUEST_MESSAGE_LIMIT = 5  # Per IP per day AND per session per day
 
 
 class GuestChatMessage(BaseModel):
@@ -1142,33 +1142,101 @@ async def _guest_chat_stream(
 
 
 async def guest_chat_completion(
+    http_request: Request,
     request: GuestChatRequest,
     session: AsyncSession = Depends(get_db_session_fa),
     settings: Settings = Depends(get_settings),
 ):
-    """POST /api/chat/guest — unauthenticated, rate-limited by session_id."""
+    """POST /api/chat/guest — unauthenticated, rate-limited by IP + session_id.
 
+    Rate limit: GUEST_MESSAGE_LIMIT messages per IP per day
+                AND GUEST_MESSAGE_LIMIT messages per session_id per day.
+    Whichever dimension hits the limit first blocks the request.
+    This prevents abuse via:
+      - Multiple browser sessions / incognito windows (blocked by IP)
+      - VPN per-question cycling (each VPN exit node gets its own daily counter)
+    Counts are stored in Postgres so they survive server restarts and
+    work correctly when App Runner runs multiple instances.
+    """
     sid = (request.session_id or "").strip()
     if not sid:
         raise HTTPException(status_code=400, detail="session_id is required.")
 
-    # Rate limit check
-    count = _GUEST_SESSION_COUNTS.get(sid, 0)
-    if count >= GUEST_MESSAGE_LIMIT:
-        raise HTTPException(
-            status_code=429,
-            detail={
-                "code": "GUEST_LIMIT_REACHED",
-                "message": (
-                    f"You have used all {GUEST_MESSAGE_LIMIT} free questions. "
-                    "Sign up for free to continue your journey with the wisdom of Ramana Maharshi."
-                ),
-                "limit": GUEST_MESSAGE_LIMIT,
-            },
-        )
+    # ── Derive today's UTC date key and hashed IP ──────────────────────────
+    today_str = _dt.datetime.utcnow().strftime("%Y-%m-%d")
+    client_ip = (
+        http_request.headers.get("x-forwarded-for", "").split(",")[0].strip()
+        or (http_request.client.host if http_request.client else "unknown")
+    )
+    ip_hash = hashlib.sha256(client_ip.encode()).hexdigest()
 
-    # Increment counter before the call (pessimistic — avoids abuse on slow connections)
-    _GUEST_SESSION_COUNTS[sid] = count + 1
+    _LIMIT_429 = {
+        "code": "GUEST_LIMIT_REACHED",
+        "message": (
+            f"You have used all {GUEST_MESSAGE_LIMIT} free questions for today. "
+            "Sign up for free to continue exploring the wisdom of Sri Ramana Maharshi."
+        ),
+        "limit": GUEST_MESSAGE_LIMIT,
+    }
+
+    try:
+        # ── IP check: how many messages has this IP sent today? ────────────
+        ip_row = (await session.execute(
+            select(db.GuestSession).where(
+                db.GuestSession.ip_hash == ip_hash,
+                db.GuestSession.session_date == today_str,
+            ).limit(1)
+        )).scalar_one_or_none()
+
+        if ip_row and ip_row.message_count >= GUEST_MESSAGE_LIMIT:
+            tu.logger.info(f"[GUEST_CHAT] IP limit reached: ip_hash={ip_hash[:8]}… count={ip_row.message_count}")
+            raise HTTPException(status_code=429, detail=_LIMIT_429)
+
+        # ── Session check: how many messages has this browser session sent? ─
+        sid_row = (await session.execute(
+            select(db.GuestSession).where(
+                db.GuestSession.session_id == sid,
+                db.GuestSession.session_date == today_str,
+            ).limit(1)
+        )).scalar_one_or_none()
+
+        if sid_row and sid_row.message_count >= GUEST_MESSAGE_LIMIT:
+            tu.logger.info(f"[GUEST_CHAT] Session limit reached: sid={sid[:16]}… count={sid_row.message_count}")
+            raise HTTPException(status_code=429, detail=_LIMIT_429)
+
+        # ── Both checks passed — increment counters (pessimistic) ──────────
+        if ip_row:
+            ip_row.message_count += 1
+            ip_row.updated_at = _dt.datetime.utcnow()
+            session.add(ip_row)
+        else:
+            session.add(db.GuestSession(
+                ip_hash=ip_hash, session_id=sid,
+                session_date=today_str, message_count=1,
+            ))
+
+        if sid_row:
+            sid_row.message_count += 1
+            sid_row.updated_at = _dt.datetime.utcnow()
+            session.add(sid_row)
+        else:
+            # Only create a new session row if we didn't already create one above
+            # (ip_row is None means we added a new row with ip_hash; sid_row is None separately)
+            if ip_row is not None or sid != ip_hash:
+                session.add(db.GuestSession(
+                    ip_hash=ip_hash, session_id=sid,
+                    session_date=today_str, message_count=1,
+                ))
+
+        await session.commit()
+
+    except HTTPException:
+        raise
+    except Exception as db_err:
+        # If DB check fails, fall back to allowing the request (don't punish the user
+        # for a backend error) — log and continue.
+        tu.logger.error(f"[GUEST_CHAT] DB rate-limit check failed: {db_err}")
+        await session.rollback()
 
     model = ta.Openai(id="gpt-4o", api_token=settings.openai_token)
 

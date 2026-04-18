@@ -1119,6 +1119,30 @@ class RamanaImage(Base):
     active: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False, server_default="true")
 
 
+class GuestSession(Base):
+    """Tracks guest (unauthenticated) chat usage for rate limiting.
+
+    We record a hashed IP address (SHA-256, never raw) and count how many
+    messages the visitor has sent today.  The date column allows a daily reset
+    without expensive deletes — we simply compare the stored date to today.
+
+    The session_id is the browser-generated UUID stored in sessionStorage.
+    Both dimensions are checked independently: the *stricter* limit applies.
+    """
+    __tablename__ = "guest_sessions"
+
+    id: Mapped[pkey_uuid]
+    created_at: Mapped[default_timestamp]
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=func.now(), onupdate=func.now(), nullable=False
+    )
+    ip_hash: Mapped[str]   = mapped_column(String(64), nullable=False, index=True)
+    session_id: Mapped[str] = mapped_column(String(128), nullable=False, index=True)
+    # The calendar date (UTC) this row covers — allows a clean daily reset.
+    session_date: Mapped[str] = mapped_column(String(10), nullable=False)  # "YYYY-MM-DD"
+    message_count: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+
+
 # ============================================================================
 # 5. INDEXES
 # ============================================================================

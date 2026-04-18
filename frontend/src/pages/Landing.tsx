@@ -600,9 +600,16 @@ function GuestChatSection() {
   });
   const [showModal, setShowModal] = useState(false);
   const bottomRef = useRef<HTMLDivElement>(null);
+  const msgLenRef = useRef(0);
 
+  // Only auto-scroll when a new message pair is added (user sent a message),
+  // NOT on every streaming token update. This prevents competing with the
+  // user's own page scroll while the assistant is responding.
   useEffect(() => {
-    bottomRef.current?.scrollIntoView({ behavior: "smooth" });
+    if (messages.length !== msgLenRef.current) {
+      msgLenRef.current = messages.length;
+      bottomRef.current?.scrollIntoView({ behavior: "smooth" });
+    }
   }, [messages]);
 
   const saveMsgs = (msgs: GMsg[]) => {
@@ -766,7 +773,12 @@ function GuestChatSection() {
                   lineHeight: 1.65,
                 }}>
                   {m.content || (loading && i === messages.length - 1 ? (
-                    <span style={{ opacity: 0.6 }}>Contemplating…</span>
+                    <span style={{ opacity: 0.7, display: "inline-flex", alignItems: "center", gap: "3px" }}>
+                      <span style={{ animation: "pulse 1.2s ease-in-out infinite" }}>●</span>
+                      <span style={{ animation: "pulse 1.2s ease-in-out 0.4s infinite" }}>●</span>
+                      <span style={{ animation: "pulse 1.2s ease-in-out 0.8s infinite" }}>●</span>
+                      <style>{`@keyframes pulse { 0%,100%{opacity:0.3} 50%{opacity:1} }`}</style>
+                    </span>
                   ) : "…")}
                 </div>
               </div>

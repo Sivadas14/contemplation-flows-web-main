@@ -120,6 +120,13 @@ apiClient.interceptors.response.use(
                     localStorage.removeItem('refreshToken');
                     localStorage.removeItem('userProfile');
 
+                    // On the landing page ("/"), silently clear the stale token
+                    // and do NOT redirect or sign out — the guest user is just browsing
+                    if (window.location.pathname === '/') {
+                        console.warn('Stale token on landing page — cleared silently, no redirect.');
+                        break;
+                    }
+
                     // Clear Supabase session to prevent PublicRoute from redirecting back
                     try {
                         // Use a flag to prevent recursion if signOut itself triggers a 401 somehow

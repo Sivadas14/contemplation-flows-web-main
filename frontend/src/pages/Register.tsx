@@ -1,41 +1,116 @@
 import React, { useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
-import { Button } from "@/components/ui/button";
-import { Input } from "@/components/ui/input";
-import { Label } from "@/components/ui/label";
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { Mail, Smartphone } from "lucide-react";
 import { useAuth } from "@/contexts/AuthContext";
 
-// ---- Validation helpers (shared across auth screens if we need them later) ----
+// ─── Design tokens (match Landing.tsx & SignIn.tsx) ───────────────────────────
+const T = {
+  cream:  "#F5F0EC",
+  card:   "#FFFCF9",
+  brown:  "#472B20",
+  muted:  "#8A6D5E",
+  accent: "#B85A2D",
+  border: "#E0D5CC",
+  serif:  "'DM Serif Text', serif",
+  sans:   "'Figtree', sans-serif",
+};
 
-// RFC 5322-lite: reasonable email pattern that catches obvious junk
+// ─── Shared element styles ────────────────────────────────────────────────────
+const inputStyle: React.CSSProperties = {
+  width: "100%",
+  padding: "0.65rem 0.875rem",
+  fontFamily: T.sans,
+  fontSize: "0.9rem",
+  color: T.brown,
+  backgroundColor: T.cream,
+  border: `1px solid ${T.border}`,
+  borderRadius: "4px",
+  outline: "none",
+  boxSizing: "border-box",
+};
+
+const labelStyle: React.CSSProperties = {
+  display: "block",
+  fontFamily: T.sans,
+  fontSize: "0.82rem",
+  fontWeight: 600,
+  color: T.brown,
+  marginBottom: "0.35rem",
+  letterSpacing: "0.02em",
+};
+
+const btnPrimary: React.CSSProperties = {
+  display: "block",
+  width: "100%",
+  padding: "0.72rem 1rem",
+  backgroundColor: T.accent,
+  color: "#fff",
+  fontFamily: T.sans,
+  fontSize: "0.9rem",
+  fontWeight: 600,
+  border: "none",
+  borderRadius: "4px",
+  cursor: "pointer",
+  textAlign: "center",
+  transition: "opacity 0.2s",
+};
+
+const btnOutline: React.CSSProperties = {
+  display: "flex",
+  alignItems: "center",
+  justifyContent: "center",
+  gap: "0.5rem",
+  width: "100%",
+  padding: "0.7rem 1rem",
+  backgroundColor: T.card,
+  color: T.brown,
+  fontFamily: T.sans,
+  fontSize: "0.88rem",
+  fontWeight: 600,
+  border: `1px solid ${T.border}`,
+  borderRadius: "4px",
+  cursor: "pointer",
+  transition: "background-color 0.2s",
+};
+
+// ─── Validation helpers ───────────────────────────────────────────────────────
 const EMAIL_REGEX = /^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$/;
 
-// Password policy: at least 8 chars, one uppercase, one lowercase, one number
-const validatePassword = (password: string): { valid: boolean; message?: string } => {
-  if (password.length < 8) return { valid: false, message: "Password must be at least 8 characters long" };
-  if (!/[A-Z]/.test(password)) return { valid: false, message: "Password must contain at least one uppercase letter" };
-  if (!/[a-z]/.test(password)) return { valid: false, message: "Password must contain at least one lowercase letter" };
-  if (!/[0-9]/.test(password)) return { valid: false, message: "Password must contain at least one number" };
+const validatePassword = (p: string): { valid: boolean; message?: string } => {
+  if (p.length < 8)     return { valid: false, message: "Password must be at least 8 characters" };
+  if (!/[A-Z]/.test(p)) return { valid: false, message: "Must contain at least one uppercase letter" };
+  if (!/[a-z]/.test(p)) return { valid: false, message: "Must contain at least one lowercase letter" };
+  if (!/[0-9]/.test(p)) return { valid: false, message: "Must contain at least one number" };
   return { valid: true };
 };
 
-// Simple strength indicator for UI feedback
-const getPasswordStrength = (password: string): { label: string; color: string; pct: number } => {
-  if (password.length === 0) return { label: '', color: 'bg-gray-200', pct: 0 };
+const getPasswordStrength = (p: string): { label: string; color: string; pct: number } => {
+  if (!p.length) return { label: '', color: '#E0D5CC', pct: 0 };
   let score = 0;
-  if (password.length >= 8) score++;
-  if (password.length >= 12) score++;
-  if (/[A-Z]/.test(password) && /[a-z]/.test(password)) score++;
-  if (/[0-9]/.test(password)) score++;
-  if (/[^A-Za-z0-9]/.test(password)) score++;
-  if (score <= 2) return { label: 'Weak', color: 'bg-red-500', pct: 33 };
-  if (score <= 3) return { label: 'Medium', color: 'bg-yellow-500', pct: 66 };
-  return { label: 'Strong', color: 'bg-green-500', pct: 100 };
+  if (p.length >= 8) score++;
+  if (p.length >= 12) score++;
+  if (/[A-Z]/.test(p) && /[a-z]/.test(p)) score++;
+  if (/[0-9]/.test(p)) score++;
+  if (/[^A-Za-z0-9]/.test(p)) score++;
+  if (score <= 2) return { label: 'Weak',   color: '#C0392B', pct: 33 };
+  if (score <= 3) return { label: 'Medium', color: '#D4931A', pct: 66 };
+  return             { label: 'Strong', color: '#2E7D32', pct: 100 };
 };
 
+// ─── Country codes ────────────────────────────────────────────────────────────
+const COUNTRIES = [
+  { code: "+1",   label: "+1  US/CA" },
+  { code: "+91",  label: "+91 IN"    },
+  { code: "+44",  label: "+44 UK"    },
+  { code: "+61",  label: "+61 AU"    },
+  { code: "+65",  label: "+65 SG"    },
+  { code: "+971", label: "+971 AE"   },
+  { code: "+81",  label: "+81 JP"    },
+  { code: "+86",  label: "+86 CN"    },
+  { code: "+49",  label: "+49 DE"    },
+  { code: "+33",  label: "+33 FR"    },
+];
+
+// ─── Component ────────────────────────────────────────────────────────────────
 const Register: React.FC = () => {
   const { register, signInWithGoogle, verifyOtp, resendOtp } = useAuth();
   const navigate = useNavigate();
@@ -44,7 +119,7 @@ const Register: React.FC = () => {
   const [name, setName] = useState("");
   const [email, setEmail] = useState("");
   const [phone, setPhone] = useState("");
-  const [countryCode, setCountryCode] = useState("+1");
+  const [countryCode, setCountryCode] = useState("+91");
   const [password, setPassword] = useState("");
   const [confirmPassword, setConfirmPassword] = useState("");
   const [otp, setOtp] = useState("");
@@ -52,9 +127,8 @@ const Register: React.FC = () => {
   const [error, setError] = useState("");
   const [errorCode, setErrorCode] = useState<string | null>(null);
   const [success, setSuccess] = useState("");
-  const [pendingUser, setPendingUser] = useState<any>(null);
 
-  const passwordStrength = getPasswordStrength(password);
+  const pwStrength = getPasswordStrength(password);
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -62,95 +136,34 @@ const Register: React.FC = () => {
     setErrorCode(null);
     setSuccess("");
 
-    // Trim inputs once, up front
-    const cleanName = name.trim();
+    const cleanName  = name.trim();
     const cleanEmail = email.trim().toLowerCase();
-    const cleanPhone = phone.replace(/\D/g, '').trim(); // digits only
+    const cleanPhone = phone.replace(/\D/g, '').trim();
 
-    // Name validation
-    if (!cleanName) {
-      setError("Please enter your name");
-      return;
-    }
-    if (cleanName.length < 2) {
-      setError("Name must be at least 2 characters");
-      return;
-    }
+    if (!cleanName || cleanName.length < 2)   { setError("Please enter your full name (at least 2 characters)"); return; }
+    if (!EMAIL_REGEX.test(cleanEmail))         { setError("Please enter a valid email address"); return; }
+    if (!cleanPhone || cleanPhone.length < 7)  { setError("Please enter a valid phone number"); return; }
 
-    // Email validation
-    if (!cleanEmail) {
-      setError("Please enter your email");
-      return;
-    }
-    if (!EMAIL_REGEX.test(cleanEmail)) {
-      setError("Please enter a valid email address");
-      return;
-    }
-
-    // Phone validation
-    if (!cleanPhone) {
-      setError("Please enter your phone number");
-      return;
-    }
-    if (cleanPhone.length < 7 || cleanPhone.length > 15) {
-      setError("Please enter a valid phone number (7-15 digits)");
-      return;
-    }
-
-    // Password validation - stricter policy
-    if (!password) {
-      setError("Please enter a password");
-      return;
-    }
     const pwCheck = validatePassword(password);
-    if (!pwCheck.valid) {
-      setError(pwCheck.message || "Password does not meet requirements");
-      return;
-    }
-
-    if (password !== confirmPassword) {
-      setError("Passwords do not match");
-      return;
-    }
+    if (!pwCheck.valid)                        { setError(pwCheck.message || "Password does not meet requirements"); return; }
+    if (password !== confirmPassword)          { setError("Passwords do not match"); return; }
 
     setIsLoading(true);
-
     try {
-      const response = await register({
-        name: cleanName,
-        email: cleanEmail,
-        phone: cleanPhone,
-        password,
-        country_code: countryCode,
-      });
-
+      const response = await register({ name: cleanName, email: cleanEmail, phone: cleanPhone, password, country_code: countryCode });
       if (response.success) {
         if (response.requiresEmailConfirmation) {
-          // signUp() with PKCE flow already sends an 8-digit OTP to the user's email.
-          // Only advance to OTP step AFTER we've confirmed it's a genuine new signup.
-          setPendingUser(response.user);
           setStep('otp');
-          setSuccess("Account created! Please check your email for an 8-digit verification code.");
+          setSuccess("Account created! Please enter the 8-digit code sent to your email.");
         } else {
-          setSuccess("Registration successful! Redirecting...");
-          setTimeout(() => {
-            navigate('/home');
-          }, 2000);
+          setSuccess("Registration successful! Redirecting…");
+          setTimeout(() => navigate('/home'), 1500);
         }
       } else {
-        // Handle specific error codes returned from AuthContext
-        if (response.code === 'USER_ALREADY_EXISTS') {
-          setErrorCode('USER_ALREADY_EXISTS');
-          setError(response.message);
-        } else if (response.code === 'RATE_LIMITED') {
-          setErrorCode('RATE_LIMITED');
-          setError(response.message);
-        } else {
-          setError(response.message || 'Registration failed');
-        }
+        setErrorCode(response.code || null);
+        setError(response.message || 'Registration failed');
       }
     } catch (err: any) {
-      console.error('❌ [Register] Unexpected error:', err);
       setError(err.message || "Registration failed. Please try again.");
     } finally {
       setIsLoading(false);
@@ -160,31 +173,15 @@ const Register: React.FC = () => {
   const handleVerifyOtp = async (e: React.FormEvent) => {
     e.preventDefault();
     setError("");
-
-    if (!otp.trim()) {
-      setError("Please enter the verification code");
-      return;
-    }
-
-    if (otp.length !== 8) {
-      setError("Please enter a 8-digit verification code");
-      return;
-    }
-
+    if (otp.length !== 8) { setError("Please enter the 8-digit code"); return; }
     setIsLoading(true);
-
     try {
-      const response = await verifyOtp(email, otp, 'signup'); // signUp() sends type 'signup' OTP
-
+      const response = await verifyOtp(email, otp, 'signup');
       if (response.success) {
-        setSuccess("Email verified successfully! Redirecting...");
-
-        // Small delay to ensure auth state is fully updated
-        setTimeout(() => {
-          navigate('/home');
-        }, 500);
+        setSuccess("Email verified! Redirecting…");
+        setTimeout(() => navigate('/home'), 500);
       } else {
-        setError(response.message || "Invalid verification code. Please try again.");
+        setError(response.message || "Invalid code. Please try again.");
       }
     } catch (err: any) {
       setError(err.message || "Verification failed. Please try again.");
@@ -196,17 +193,12 @@ const Register: React.FC = () => {
   const handleResendOtp = async () => {
     setError("");
     setIsLoading(true);
-
     try {
       const response = await resendOtp(email, 'signup');
-
-      if (response.success) {
-        setSuccess("Verification code sent! Please check your email.");
-      } else {
-        setError(response.message || "Failed to resend code. Please try again.");
-      }
+      if (response.success) setSuccess("Code resent! Check your email.");
+      else setError(response.message || "Failed to resend code.");
     } catch (err: any) {
-      setError(err.message || "Failed to resend code. Please try again.");
+      setError(err.message || "Failed to resend code.");
     } finally {
       setIsLoading(false);
     }
@@ -214,315 +206,268 @@ const Register: React.FC = () => {
 
   const handleGoogleSignIn = async () => {
     setError("");
-    try {
-      await signInWithGoogle();
-    } catch (err: any) {
-      setError(err.message || "Google sign in failed");
-    }
+    try { await signInWithGoogle(); }
+    catch (err: any) { setError(err.message || "Google sign in failed"); }
   };
 
   return (
-    <div className="h-full overflow-y-auto flex justify-center py-12 px-4 sm:px-6 lg:px-8" style={{ backgroundColor: '#503b5d' }}>
-      <div className="max-w-md w-full space-y-8">
-        <Card>
-          {/* <div className="mx-auto mb-4 mt-4 w-16 h-16 bg-orange-100 rounded-full flex items-center justify-center">
-            <Smartphone className="w-8 h-8 text-orange-600" />
-          </div> */}
+    <div
+      style={{
+        minHeight: "100vh",
+        backgroundColor: T.cream,
+        display: "flex",
+        flexDirection: "column",
+        alignItems: "center",
+        justifyContent: "center",
+        padding: "2rem 1rem",
+        fontFamily: T.sans,
+      }}
+    >
+      {/* Brand */}
+      <div style={{ marginBottom: "1.75rem", textAlign: "center" }}>
+        <Link to="/" style={{ textDecoration: "none" }}>
+          <h1 style={{ fontFamily: T.serif, fontSize: "1.55rem", color: T.brown, letterSpacing: "0.02em", margin: 0 }}>
+            Arunachala Samudra
+          </h1>
+        </Link>
+        <p style={{ color: T.muted, fontSize: "0.74rem", letterSpacing: "0.12em", textTransform: "uppercase", marginTop: "0.3rem", fontFamily: T.sans }}>
+          Sacred Wisdom Portal
+        </p>
+      </div>
 
-          <CardHeader>
-            <CardTitle className="text-2xl">
-              {step === 'form' ? 'Create an account' : 'Verify Your Email'}
-            </CardTitle>
-            <CardDescription>
-              {step === 'form'
-                ? ''
-                : <>We have sent an 8-digit verification code to {email}</>
-              }
-            </CardDescription>
-          </CardHeader>
+      {/* Card */}
+      <div style={{ width: "100%", maxWidth: "440px", backgroundColor: T.card, border: `1px solid ${T.border}`, borderRadius: "6px", padding: "2.25rem 2rem", boxShadow: "0 4px 28px rgba(46,18,8,0.09)" }}>
 
-          <CardContent>
-            {step === 'form' ? (
-              <>
-                <form onSubmit={handleSubmit} className="space-y-4">
-                  <div className="space-y-4">
-                    <div>
-                      <Label htmlFor="name" className="text-gray-700">
-                        Full Name *
-                      </Label>
-                      <Input
-                        id="name"
-                        type="text"
-                        value={name}
-                        onChange={(e) => setName(e.target.value)}
-                        placeholder="John Doe"
-                        className="mt-1"
-                        disabled={isLoading}
-                        required
-                      />
-                    </div>
+        {/* ── REGISTRATION FORM ──────────────────────────────────────── */}
+        {step === 'form' && (
+          <>
+            <h2 style={{ fontFamily: T.serif, fontSize: "1.5rem", color: T.brown, marginTop: 0, marginBottom: "0.3rem" }}>
+              Create an Account
+            </h2>
+            <p style={{ fontFamily: T.sans, color: T.muted, fontSize: "0.85rem", marginTop: 0, marginBottom: "1.5rem" }}>
+              Begin your journey with Ramana Maharshi's teachings
+            </p>
 
-                    <div>
-                      <Label htmlFor="email" className="text-gray-700">
-                        Email *
-                      </Label>
-                      <Input
-                        id="email"
-                        type="email"
-                        value={email}
-                        onChange={(e) => setEmail(e.target.value)}
-                        placeholder="john@example.com"
-                        className="mt-1"
-                        disabled={isLoading}
-                        required
-                      />
-                    </div>
+            <form onSubmit={handleSubmit} style={{ display: "flex", flexDirection: "column", gap: "1rem" }}>
 
-                    <div>
-                      <Label htmlFor="phone" className="text-gray-700">
-                        Phone Number *
-                      </Label>
-                      <div className="flex gap-2 mt-1">
-                        <Select value={countryCode} onValueChange={setCountryCode}>
-                          <SelectTrigger className="w-[120px]">
-                            <SelectValue placeholder="Code" />
-                          </SelectTrigger>
-                          <SelectContent className="max-h-[200px] overflow-y-auto">
-                            <SelectItem value="+1">+1 (US)</SelectItem>
-                            <SelectItem value="+44">+44 (UK)</SelectItem>
-                            <SelectItem value="+91">+91 (IN)</SelectItem>
-                            <SelectItem value="+86">+86 (CN)</SelectItem>
-                            <SelectItem value="+81">+81 (JP)</SelectItem>
-                            <SelectItem value="+49">+49 (DE)</SelectItem>
-                            <SelectItem value="+33">+33 (FR)</SelectItem>
-                            <SelectItem value="+61">+61 (AU)</SelectItem>
-                            <SelectItem value="+971">+971 (AE)</SelectItem>
-                            <SelectItem value="+65">+65 (SG)</SelectItem>
-                          </SelectContent>
-                        </Select>
-                        <Input
-                          id="phone"
-                          type="tel"
-                          value={phone}
-                          onChange={(e) => setPhone(e.target.value)}
-                          placeholder="555 123 4567"
-                          className="flex-1"
-                          disabled={isLoading}
-                          required
-                        />
-                      </div>
-                    </div>
+              {/* Name */}
+              <div>
+                <label style={labelStyle} htmlFor="reg-name">Full Name *</label>
+                <input
+                  id="reg-name"
+                  type="text"
+                  value={name}
+                  onChange={e => setName(e.target.value)}
+                  placeholder="Your full name"
+                  disabled={isLoading}
+                  required
+                  style={inputStyle}
+                />
+              </div>
 
-                    <div>
-                      <Label htmlFor="password" className="text-gray-700">
-                        Password *
-                      </Label>
-                      <Input
-                        id="password"
-                        type="password"
-                        value={password}
-                        onChange={(e) => setPassword(e.target.value)}
-                        placeholder="At least 8 characters"
-                        className="mt-1"
-                        disabled={isLoading}
-                        required
-                      />
-                      {password.length > 0 && (
-                        <div className="mt-2">
-                          <div className="h-1.5 w-full bg-gray-200 rounded-full overflow-hidden">
-                            <div
-                              className={`h-full transition-all ${passwordStrength.color}`}
-                              style={{ width: `${passwordStrength.pct}%` }}
-                            />
-                          </div>
-                          <p className="text-xs text-gray-600 mt-1">
-                            Strength: <span className="font-medium">{passwordStrength.label}</span>
-                            {' · '}
-                            Must include uppercase, lowercase, and a number
-                          </p>
-                        </div>
-                      )}
-                    </div>
+              {/* Email */}
+              <div>
+                <label style={labelStyle} htmlFor="reg-email">Email *</label>
+                <input
+                  id="reg-email"
+                  type="email"
+                  value={email}
+                  onChange={e => setEmail(e.target.value)}
+                  placeholder="you@example.com"
+                  disabled={isLoading}
+                  required
+                  style={inputStyle}
+                />
+              </div>
 
-                    <div>
-                      <Label htmlFor="confirmPassword" className="text-gray-700">
-                        Confirm Password *
-                      </Label>
-                      <Input
-                        id="confirmPassword"
-                        type="password"
-                        value={confirmPassword}
-                        onChange={(e) => setConfirmPassword(e.target.value)}
-                        placeholder="Confirm your password"
-                        className="mt-1"
-                        disabled={isLoading}
-                        required
-                      />
-                      {confirmPassword.length > 0 && password !== confirmPassword && (
-                        <p className="text-xs text-red-600 mt-1">Passwords do not match</p>
-                      )}
-                    </div>
-                  </div>
-
-                  {error && (
-                    <div className="p-3 bg-red-50 border border-red-200 rounded-md">
-                      <p className="text-red-600 text-sm">{error}</p>
-                      {errorCode === 'USER_ALREADY_EXISTS' && (
-                        <div className="mt-2 space-y-1">
-                          <p className="text-red-700 text-sm">
-                            <Link to="/signin" className="font-medium underline hover:text-red-800">
-                              Sign in with your existing account
-                            </Link>
-                          </p>
-                          <p className="text-red-700 text-sm">
-                            <Link to="/forgot-password" className="font-medium underline hover:text-red-800">
-                              Forgot your password? Reset it here
-                            </Link>
-                          </p>
-                        </div>
-                      )}
-                      {errorCode === 'RATE_LIMITED' && (
-                        <p className="text-red-700 text-xs mt-2">
-                          Tip: try a different email address, or wait an hour for the rate limit to reset.
-                        </p>
-                      )}
-                    </div>
-                  )}
-                  {success && <p className="text-green-600 text-sm">{success}</p>}
-
-                  <Button
-                    type="submit"
+              {/* Phone */}
+              <div>
+                <label style={labelStyle} htmlFor="reg-phone">Phone Number *</label>
+                <div style={{ display: "flex", gap: "0.5rem" }}>
+                  <select
+                    value={countryCode}
+                    onChange={e => setCountryCode(e.target.value)}
                     disabled={isLoading}
-                    className="w-full bg-orange-600 hover:bg-orange-700 text-white"
+                    style={{ ...inputStyle, width: "auto", flexShrink: 0, paddingRight: "0.5rem" }}
                   >
-                    {isLoading ? "Creating Account..." : "Create Account"}
-                  </Button>
-                </form>
-
-                <div className="relative my-6">
-                  <div className="absolute inset-0 flex items-center">
-                    <div className="w-full border-t border-gray-300" />
-                  </div>
-                  <div className="relative flex justify-center text-sm">
-                    <span className="px-2 bg-white text-gray-500">Or continue with</span>
-                  </div>
-                </div>
-
-                <div className="mb-6">
-                  <Button
-                    onClick={handleGoogleSignIn}
-                    className="w-full flex justify-center items-center gap-3 bg-white text-gray-700 border border-gray-300 hover:bg-gray-50"
-                    variant="outline"
+                    {COUNTRIES.map(c => (
+                      <option key={c.code} value={c.code}>{c.label}</option>
+                    ))}
+                  </select>
+                  <input
+                    id="reg-phone"
+                    type="tel"
+                    value={phone}
+                    onChange={e => setPhone(e.target.value)}
+                    placeholder="Phone number"
                     disabled={isLoading}
-                  >
-                    <svg className="w-5 h-5" viewBox="0 0 24 24">
-                      <path fill="#4285F4" d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92c-.26 1.37-1.04 2.53-2.21 3.31v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.09z" />
-                      <path fill="#34A853" d="M12 23c2.97 0 5.46-.98 7.28-2.66l-3.57-2.77c-.98.66-2.23 1.06-3.71 1.06-2.86 0-5.29-1.93-6.16-4.53H2.18v2.84C3.99 20.53 7.7 23 12 23z" />
-                      <path fill="#FBBC05" d="M5.84 14.09c-.22-.66-.35-1.36-.35-2.09s.13-1.43.35-2.09V7.07H2.18C1.43 8.55 1 10.22 1 12s.43 3.45 1.18 4.93l2.85-2.22.81-.62z" />
-                      <path fill="#EA4335" d="M12 5.38c1.62 0 3.06.56 4.21 1.64l3.15-3.15C17.45 2.09 14.97 1 12 1 7.7 1 3.99 3.47 2.18 7.07l3.66 2.84c.87-2.6 3.3-4.53 6.16-4.53z" />
-                    </svg>
-                    Continue with Google
-                  </Button>
+                    required
+                    style={{ ...inputStyle, flex: 1 }}
+                  />
                 </div>
+              </div>
 
-                <div className="pt-6 border-t border-gray-200">
-                  <div className="text-center">
-                    <p className="text-sm text-gray-600">
-                      Already have an account?{" "}
-                      <Link
-                        to="/signin"
-                        className="font-medium text-orange-600 hover:text-orange-500"
-                      >
-                        Sign in here
-                      </Link>
+              {/* Password */}
+              <div>
+                <label style={labelStyle} htmlFor="reg-password">Password *</label>
+                <input
+                  id="reg-password"
+                  type="password"
+                  value={password}
+                  onChange={e => setPassword(e.target.value)}
+                  placeholder="At least 8 characters"
+                  disabled={isLoading}
+                  required
+                  style={inputStyle}
+                />
+                {password.length > 0 && (
+                  <div style={{ marginTop: "0.5rem" }}>
+                    <div style={{ height: "4px", width: "100%", backgroundColor: T.border, borderRadius: "2px", overflow: "hidden" }}>
+                      <div style={{ height: "100%", width: `${pwStrength.pct}%`, backgroundColor: pwStrength.color, transition: "width 0.3s, background-color 0.3s" }} />
+                    </div>
+                    <p style={{ fontFamily: T.sans, fontSize: "0.76rem", color: T.muted, marginTop: "0.3rem" }}>
+                      Strength: <span style={{ color: pwStrength.color, fontWeight: 600 }}>{pwStrength.label}</span>
+                      {' · '}Requires uppercase, lowercase and a number
                     </p>
                   </div>
-                </div>
-              </>
-            ) : (
-              <form onSubmit={handleVerifyOtp} className="space-y-6">
-                {/* <div className="text-center">
-                  <div className="w-12 h-12 bg-orange-100 rounded-full flex items-center justify-center mx-auto mb-3">
-                    <Mail className="w-6 h-6 text-orange-600" />
-                  </div>
-                  <h3 className="text-lg font-medium text-gray-900 mb-2">Check Your Email</h3>
-                  <p className="text-sm text-gray-600 mb-4">
-                    We sent an 8-digit verification code to:<br />
-                    <strong className="text-gray-800">{email}</strong>
-                  </p>
-                </div> */}
-
-                <div className="space-y-2">
-                  {/* <Label htmlFor="otp" className="text-gray-700 text-sm font-medium">
-                    Verification Code
-                  </Label> */}
-                  <Input
-                    id="otp"
-                    type="text"
-                    value={otp}
-                    onChange={(e) => setOtp(e.target.value.replace(/\D/g, '').slice(0, 8))}
-                    placeholder="Enter 8-digit code"
-                    className="text-center tracking-widest text-lg font-mono h-12 text-base"
-                    disabled={isLoading}
-                    maxLength={8}
-                    required
-                  />
-                  {/* <p className="text-xs text-gray-500 text-center">
-                    Enter the 8-digit code from your email
-                  </p> */}
-                </div>
-
-                <div className="text-center">
-                  Didn't receive the code?
-                  <button
-                    type="button"
-                    onClick={handleResendOtp}
-                    disabled={isLoading}
-                    className="text-sm ml-2 text-orange-600 hover:text-orange-500 disabled:text-gray-400 underline"
-                  >
-                    Click to resend
-                  </button>
-                </div>
-
-                {error && (
-                  <div className="p-3 bg-red-50 border border-red-200 rounded-md">
-                    <p className="text-red-600 text-sm text-center">{error}</p>
-                  </div>
                 )}
-                {/* {success && (
-                  <div className="p-3 bg-green-50 border border-green-200 rounded-md">
-                    <p className="text-green-600 text-sm text-center">{success}</p>
-                  </div>
-                )} */}
+              </div>
 
-                <div className="flex gap-3">
-                  <Button
-                    type="button"
-                    variant="outline"
-                    onClick={() => {
-                      setStep('form');
-                      setOtp('');
-                      setError('');
-                      setSuccess('');
-                    }}
-                    disabled={isLoading}
-                    className="flex-1"
-                  >
-                    Back
-                  </Button>
-                  <Button
-                    type="submit"
-                    disabled={isLoading || otp.length !== 8}
-                    className="flex-1 bg-orange-600 hover:bg-orange-700 text-white"
-                  >
-                    {isLoading ? "Verifying..." : "Verify Email"}
-                  </Button>
+              {/* Confirm Password */}
+              <div>
+                <label style={labelStyle} htmlFor="reg-confirm">Confirm Password *</label>
+                <input
+                  id="reg-confirm"
+                  type="password"
+                  value={confirmPassword}
+                  onChange={e => setConfirmPassword(e.target.value)}
+                  placeholder="Repeat your password"
+                  disabled={isLoading}
+                  required
+                  style={{ ...inputStyle, borderColor: (confirmPassword.length > 0 && password !== confirmPassword) ? '#C0392B' : T.border }}
+                />
+                {confirmPassword.length > 0 && password !== confirmPassword && (
+                  <p style={{ fontFamily: T.sans, fontSize: "0.76rem", color: "#C0392B", marginTop: "0.3rem" }}>
+                    Passwords do not match
+                  </p>
+                )}
+              </div>
+
+              {/* Error */}
+              {error && (
+                <div style={{ backgroundColor: "#FEF2EE", border: "1px solid #F5C4B2", borderRadius: "4px", padding: "0.75rem 1rem" }}>
+                  <p style={{ color: "#8B3225", fontFamily: T.sans, fontSize: "0.84rem", margin: 0 }}>{error}</p>
+                  {errorCode === 'USER_ALREADY_EXISTS' && (
+                    <div style={{ marginTop: "0.5rem", display: "flex", flexDirection: "column", gap: "0.25rem" }}>
+                      <Link to="/signin" style={{ color: T.accent, fontFamily: T.sans, fontSize: "0.82rem", fontWeight: 600 }}>
+                        Sign in to your existing account →
+                      </Link>
+                      <Link to="/forgot-password" style={{ color: T.accent, fontFamily: T.sans, fontSize: "0.82rem", fontWeight: 600 }}>
+                        Forgot password? Reset it here →
+                      </Link>
+                    </div>
+                  )}
                 </div>
-              </form>
+              )}
+              {success && (
+                <p style={{ color: "#2E7D32", fontFamily: T.sans, fontSize: "0.84rem", margin: 0 }}>{success}</p>
+              )}
+
+              <button type="submit" disabled={isLoading} style={{ ...btnPrimary, opacity: isLoading ? 0.65 : 1, marginTop: "0.25rem" }}>
+                {isLoading ? "Creating Account…" : "Create Account"}
+              </button>
+            </form>
+
+            {/* Divider */}
+            <div style={{ display: "flex", alignItems: "center", gap: "0.75rem", margin: "1.5rem 0" }}>
+              <div style={{ flex: 1, borderTop: `1px solid ${T.border}` }} />
+              <span style={{ fontFamily: T.sans, color: T.muted, fontSize: "0.76rem", textTransform: "uppercase", letterSpacing: "0.08em" }}>or</span>
+              <div style={{ flex: 1, borderTop: `1px solid ${T.border}` }} />
+            </div>
+
+            {/* Google */}
+            <button type="button" onClick={handleGoogleSignIn} disabled={isLoading} style={{ ...btnOutline, marginBottom: "1.5rem" }}>
+              <svg width="18" height="18" viewBox="0 0 24 24">
+                <path fill="#4285F4" d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92c-.26 1.37-1.04 2.53-2.21 3.31v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.09z" />
+                <path fill="#34A853" d="M12 23c2.97 0 5.46-.98 7.28-2.66l-3.57-2.77c-.98.66-2.23 1.06-3.71 1.06-2.86 0-5.29-1.93-6.16-4.53H2.18v2.84C3.99 20.53 7.7 23 12 23z" />
+                <path fill="#FBBC05" d="M5.84 14.09c-.22-.66-.35-1.36-.35-2.09s.13-1.43.35-2.09V7.07H2.18C1.43 8.55 1 10.22 1 12s.43 3.45 1.18 4.93l2.85-2.22.81-.62z" />
+                <path fill="#EA4335" d="M12 5.38c1.62 0 3.06.56 4.21 1.64l3.15-3.15C17.45 2.09 14.97 1 12 1 7.7 1 3.99 3.47 2.18 7.07l3.66 2.84c.87-2.6 3.3-4.53 6.16-4.53z" />
+              </svg>
+              Continue with Google
+            </button>
+
+            {/* Sign in link */}
+            <div style={{ borderTop: `1px solid ${T.border}`, paddingTop: "1.25rem", textAlign: "center" }}>
+              <p style={{ fontFamily: T.sans, color: T.muted, fontSize: "0.85rem", margin: 0 }}>
+                Already have an account?{" "}
+                <Link to="/signin" style={{ color: T.accent, fontWeight: 600, textDecoration: "none" }}>
+                  Sign in
+                </Link>
+              </p>
+            </div>
+          </>
+        )}
+
+        {/* ── OTP VERIFICATION STEP ─────────────────────────────────── */}
+        {step === 'otp' && (
+          <>
+            <h2 style={{ fontFamily: T.serif, fontSize: "1.5rem", color: T.brown, marginTop: 0, marginBottom: "0.3rem" }}>
+              Verify Your Email
+            </h2>
+            <p style={{ fontFamily: T.sans, color: T.muted, fontSize: "0.85rem", marginTop: 0, marginBottom: "1.5rem" }}>
+              We sent an 8-digit code to <strong style={{ color: T.brown }}>{email}</strong>
+            </p>
+
+            {success && (
+              <p style={{ color: "#2E7D32", fontFamily: T.sans, fontSize: "0.84rem", marginBottom: "1rem" }}>{success}</p>
             )}
-          </CardContent>
-        </Card>
+
+            <form onSubmit={handleVerifyOtp} style={{ display: "flex", flexDirection: "column", gap: "1rem" }}>
+              <input
+                id="otp-code"
+                type="text"
+                value={otp}
+                onChange={e => setOtp(e.target.value.replace(/\D/g, '').slice(0, 8))}
+                placeholder="8-digit code"
+                disabled={isLoading}
+                maxLength={8}
+                required
+                style={{ ...inputStyle, textAlign: "center", letterSpacing: "0.35em", fontSize: "1.3rem", fontFamily: "monospace", padding: "0.85rem" }}
+              />
+
+              <div style={{ display: "flex", justifyContent: "center", alignItems: "center", gap: "0.5rem" }}>
+                <span style={{ fontFamily: T.sans, color: T.muted, fontSize: "0.83rem" }}>Didn't receive it?</span>
+                <button type="button" onClick={handleResendOtp} disabled={isLoading}
+                  style={{ background: "none", border: "none", color: T.accent, fontFamily: T.sans, fontSize: "0.83rem", fontWeight: 600, cursor: "pointer", padding: 0 }}>
+                  Resend
+                </button>
+              </div>
+
+              {error && (
+                <div style={{ backgroundColor: "#FEF2EE", border: "1px solid #F5C4B2", borderRadius: "4px", padding: "0.75rem 1rem" }}>
+                  <p style={{ color: "#8B3225", fontFamily: T.sans, fontSize: "0.84rem", margin: 0, textAlign: "center" }}>{error}</p>
+                </div>
+              )}
+
+              <div style={{ display: "flex", gap: "0.75rem", marginTop: "0.25rem" }}>
+                <button type="button" onClick={() => { setStep('form'); setOtp(''); setError(''); setSuccess(''); }}
+                  disabled={isLoading} style={{ ...btnOutline, flex: 1 }}>
+                  Back
+                </button>
+                <button type="submit" disabled={isLoading || otp.length !== 8}
+                  style={{ ...btnPrimary, flex: 1, opacity: (isLoading || otp.length !== 8) ? 0.55 : 1 }}>
+                  {isLoading ? "Verifying…" : "Verify Email"}
+                </button>
+              </div>
+            </form>
+          </>
+        )}
       </div>
+
+      {/* Back to landing */}
+      <p style={{ marginTop: "1.25rem", fontFamily: T.sans, fontSize: "0.8rem", color: T.muted }}>
+        <Link to="/" style={{ color: T.muted, textDecoration: "none" }}>← Back to home</Link>
+      </p>
     </div>
   );
 };

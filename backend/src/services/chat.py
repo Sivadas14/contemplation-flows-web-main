@@ -1061,7 +1061,8 @@ async def _guest_chat_stream(
             "With humility, I can only speak from the teachings of Sri Ramana Maharshi. "
             "Your question seems to be outside that scope. "
             "Please feel free to ask about self-inquiry, the nature of the Self, or "
-            "any other teaching preserved in the Ramana Maharshi library."
+            "any other teaching from Bhagavan's wisdom — and do explore the chat further "
+            "with follow-up questions."
         )
         yield ta.to_openai_chunk(tt.assistant(refusal))
         yield "[DONE]\n\n"
@@ -1076,8 +1077,9 @@ async def _guest_chat_stream(
 
     if not chunks:
         no_chunks = (
-            "The library does not have indexed passages matching your question at this moment. "
-            "Please try rephrasing, or explore the full collection at Ramanasramam.org."
+            "The passages available do not yet cover this precise question. "
+            "Please try rephrasing your inquiry, or explore the chat further — "
+            "follow-up questions often open a new thread of insight."
         )
         yield ta.to_openai_chunk(tt.assistant(no_chunks))
         yield "[DONE]\n\n"

@@ -1024,7 +1024,36 @@ function FinalCTA({ isAuthenticated }: { isAuthenticated: boolean }) {
 // ─── 10. Footer ───────────────────────────────────────────────────────────────
 function Footer() {
   const [email, setEmail] = useState("");
-  const [subscribed, setSubscribed] = useState(false);
+  const [subscribeState, setSubscribeState] = useState<"idle" | "loading" | "success" | "error">("idle");
+  const [errorMsg, setErrorMsg] = useState("");
+
+  const handleSubscribe = async () => {
+    const trimmed = email.trim();
+    if (!trimmed || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(trimmed)) {
+      setErrorMsg("Please enter a valid email address.");
+      setSubscribeState("error");
+      return;
+    }
+    setSubscribeState("loading");
+    setErrorMsg("");
+    try {
+      const res = await fetch("/api/newsletter/subscribe", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ email: trimmed }),
+      });
+      if (res.ok) {
+        setSubscribeState("success");
+      } else {
+        const data = await res.json().catch(() => ({}));
+        setErrorMsg(data.detail || "Something went wrong. Please try again.");
+        setSubscribeState("error");
+      }
+    } catch {
+      setErrorMsg("Network error. Please try again.");
+      setSubscribeState("error");
+    }
+  };
 
   return (
     <footer style={{ backgroundColor: T.umber, borderTop: "1px solid #3D2518", position: "relative", overflow: "hidden" }} className="px-6 pt-14 pb-8">
@@ -1042,23 +1071,32 @@ function Footer() {
             <p style={{ fontFamily: T.sans, color: "#C4A892", fontSize: "0.72rem", letterSpacing: "0.1em", textTransform: "uppercase", fontWeight: 600, marginBottom: "0.75rem" }}>
               Subscribe for wisdom articles
             </p>
-            {subscribed ? (
+            {subscribeState === "success" ? (
               <p style={{ fontFamily: T.sans, color: T.accent, fontSize: "0.85rem" }}>✓ Thank you — we'll be in touch.</p>
             ) : (
-              <div className="flex gap-2">
-                <input
-                  type="email" placeholder="Your email" value={email}
-                  onChange={e => setEmail(e.target.value)}
-                  onKeyDown={e => { if (e.key === "Enter" && email) setSubscribed(true); }}
-                  style={{ fontFamily: T.sans, fontSize: "0.83rem", backgroundColor: "rgba(255,255,255,0.07)", border: "1px solid rgba(255,255,255,0.12)", color: "#F5F0EC", borderRadius: "4px", padding: "0.5rem 0.85rem", outline: "none", flex: 1, minWidth: 0 }}
-                />
-                <button
-                  onClick={() => { if (email) setSubscribed(true); }}
-                  style={{ ...btn, padding: "0.5rem 1rem", borderRadius: "4px", fontSize: "0.8rem", flexShrink: 0 }}
-                >
-                  Subscribe
-                </button>
-              </div>
+              <>
+                <div className="flex gap-2">
+                  <input
+                    type="email"
+                    placeholder="Your email"
+                    value={email}
+                    onChange={e => { setEmail(e.target.value); if (subscribeState === "error") setSubscribeState("idle"); }}
+                    onKeyDown={e => { if (e.key === "Enter") handleSubscribe(); }}
+                    disabled={subscribeState === "loading"}
+                    style={{ fontFamily: T.sans, fontSize: "0.83rem", backgroundColor: "rgba(255,255,255,0.07)", border: `1px solid ${subscribeState === "error" ? "#e07a5f" : "rgba(255,255,255,0.12)"}`, color: "#F5F0EC", borderRadius: "4px", padding: "0.5rem 0.85rem", outline: "none", flex: 1, minWidth: 0 }}
+                  />
+                  <button
+                    onClick={handleSubscribe}
+                    disabled={subscribeState === "loading"}
+                    style={{ ...btn, padding: "0.5rem 1rem", borderRadius: "4px", fontSize: "0.8rem", flexShrink: 0, opacity: subscribeState === "loading" ? 0.65 : 1 }}
+                  >
+                    {subscribeState === "loading" ? "…" : "Subscribe"}
+                  </button>
+                </div>
+                {subscribeState === "error" && (
+                  <p style={{ fontFamily: T.sans, color: "#e07a5f", fontSize: "0.78rem", marginTop: "0.4rem" }}>{errorMsg}</p>
+                )}
+              </>
             )}
           </div>
 

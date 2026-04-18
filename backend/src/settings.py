@@ -56,6 +56,9 @@ class Settings(BaseSettings):
     razorpay_key_secret: str | None = None
     razorpay_webhook_secret: str | None = None
 
+    # Loops email marketing (newsletter subscriptions)
+    loops_api_key: str | None = None
+
     # performance settings
     echo_db: bool = False
     content_generation_timeout: int = 300

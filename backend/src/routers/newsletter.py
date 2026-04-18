@@ -22,6 +22,12 @@ logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/newsletter", tags=["newsletter"])
 
 
+@router.get("/ping")
+async def ping():
+    """Zero-dependency check — confirms this version of the code is running."""
+    return {"alive": True, "version": "supabase-v1"}
+
+
 class SubscribeRequest(BaseModel):
     email: EmailStr
 

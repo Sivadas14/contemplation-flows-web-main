@@ -478,6 +478,136 @@ async def _force_plan_limits_raw_sql(session: AsyncSession) -> None:
     _log("=== END PLAN LIMITS ===")
 
 
+async def _update_plan_feature_texts(session: AsyncSession) -> None:
+    """
+    Update plan_features table to reflect the new meditation feature wording:
+
+    FREE / Explore:
+      - Remove audio meditation entry (any row containing 'audio' and 'meditation' or
+        'audio meditation', plus any row matching '10 min' meditation)
+      - Video meditation entry is kept as-is
+
+    Seeker (BASIC):
+      - Remove old combined minutes line (any row matching 'min' + 'audio' or 'video' pattern)
+      - Insert 'Video meditation' if not already present
+      - Insert '(max 30 minutes combined of video & audio)' if not already present
+
+    Devotee (PRO):
+      - Same removal pattern
+      - Insert 'Video meditation' if not already present
+      - Insert '(max 60 minutes combined of video & audio)' if not already present
+
+    Idempotent — safe to run on every startup.
+    """
+
+    # ── FREE: remove audio meditation and any "X min" meditation lines ─────────
+    await session.execute(text("""
+        DELETE FROM plan_features
+         WHERE plan_id IN (SELECT id FROM plans WHERE plan_type = 'FREE')
+           AND (
+               feature_text ILIKE '%audio%meditation%'
+            OR feature_text ILIKE '%audio meditation%'
+            OR (feature_text ILIKE '%min%meditation%' AND feature_text NOT ILIKE '%video%')
+            OR (feature_text ILIKE '%meditation%min%' AND feature_text NOT ILIKE '%video%')
+           )
+    """))
+
+    # ── BASIC (Seeker): remove old combined-minutes line ──────────────────────
+    await session.execute(text("""
+        DELETE FROM plan_features
+         WHERE plan_id IN (SELECT id FROM plans WHERE plan_type = 'BASIC')
+           AND (
+               feature_text ILIKE '%min audio%video%'
+            OR feature_text ILIKE '%min%audio + video%'
+            OR feature_text ILIKE '%audio + video%min%'
+            OR feature_text ILIKE '%30 min%meditation%'
+            OR feature_text ILIKE '%meditation%30 min%'
+            OR (feature_text ILIKE '%audio%video%month%' AND feature_text ILIKE '%min%')
+           )
+    """))
+
+    # ── PRO (Devotee): remove old combined-minutes line ───────────────────────
+    await session.execute(text("""
+        DELETE FROM plan_features
+         WHERE plan_id IN (SELECT id FROM plans WHERE plan_type = 'PRO')
+           AND (
+               feature_text ILIKE '%min audio%video%'
+            OR feature_text ILIKE '%min%audio + video%'
+            OR feature_text ILIKE '%audio + video%min%'
+            OR feature_text ILIKE '%200 min%'
+            OR feature_text ILIKE '%meditation%min%'
+            OR (feature_text ILIKE '%audio%video%month%' AND feature_text ILIKE '%min%')
+           )
+    """))
+
+    await session.commit()
+
+    # ── BASIC (Seeker): insert new meditation lines if not present ────────────
+    await session.execute(text("""
+        INSERT INTO plan_features (feature_text, plan_id)
+        SELECT 'Video meditation', p.id
+          FROM plans p
+         WHERE p.plan_type = 'BASIC'
+           AND NOT EXISTS (
+               SELECT 1 FROM plan_features pf
+                WHERE pf.plan_id = p.id
+                  AND pf.feature_text = 'Video meditation'
+           )
+    """))
+
+    await session.execute(text("""
+        INSERT INTO plan_features (feature_text, plan_id)
+        SELECT '(max 30 minutes combined of video & audio)', p.id
+          FROM plans p
+         WHERE p.plan_type = 'BASIC'
+           AND NOT EXISTS (
+               SELECT 1 FROM plan_features pf
+                WHERE pf.plan_id = p.id
+                  AND pf.feature_text = '(max 30 minutes combined of video & audio)'
+           )
+    """))
+
+    # ── PRO (Devotee): insert new meditation lines if not present ─────────────
+    await session.execute(text("""
+        INSERT INTO plan_features (feature_text, plan_id)
+        SELECT 'Video meditation', p.id
+          FROM plans p
+         WHERE p.plan_type = 'PRO'
+           AND NOT EXISTS (
+               SELECT 1 FROM plan_features pf
+                WHERE pf.plan_id = p.id
+                  AND pf.feature_text = 'Video meditation'
+           )
+    """))
+
+    await session.execute(text("""
+        INSERT INTO plan_features (feature_text, plan_id)
+        SELECT '(max 60 minutes combined of video & audio)', p.id
+          FROM plans p
+         WHERE p.plan_type = 'PRO'
+           AND NOT EXISTS (
+               SELECT 1 FROM plan_features pf
+                WHERE pf.plan_id = p.id
+                  AND pf.feature_text = '(max 60 minutes combined of video & audio)'
+           )
+    """))
+
+    await session.commit()
+
+    # ── Verification: log final state ─────────────────────────────────────────
+    result = await session.execute(text("""
+        SELECT p.plan_type, p.billing_cycle, p.name, pf.feature_text
+          FROM plan_features pf
+          JOIN plans p ON p.id = pf.plan_id
+         ORDER BY p.plan_type, p.billing_cycle, pf.id
+    """))
+    rows = result.fetchall()
+    _log("=== PLAN FEATURES AFTER UPDATE ===")
+    for r in rows:
+        _log(f"  {r.plan_type}/{r.billing_cycle} ({r.name}): {r.feature_text!r}")
+    _log("=== END PLAN FEATURES ===")
+
+
 async def _safe_migration(session: AsyncSession, name: str, func) -> None:
     """
     Run a migration and roll back the session on failure.
@@ -560,3 +690,6 @@ async def run_migrations(session_factory) -> None:
         # ── BULLETPROOF FINAL PASS: raw SQL forces correct limits regardless
         # of any prior failure. Always runs LAST so it has the last word.
         await _safe_migration(session, "_force_plan_limits_raw_sql", _force_plan_limits_raw_sql)
+
+        # ── Feature text updates (runs after limit pass so plan rows exist) ───
+        await _safe_migration(session, "_update_plan_feature_texts", _update_plan_feature_texts)

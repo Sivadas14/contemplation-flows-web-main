@@ -406,19 +406,11 @@ export const BillingPage: React.FC = () => {
 
                         {/* Usage Section */}
                         <section className="bg-white/60 backdrop-blur-sm rounded-lg shadow-sm border border-[#ECE5DF] p-6">
-                            <div className="flex items-start justify-between mb-6">
-                                <div>
-                                    <h2 className="text-lg font-semibold text-[#472b20]">Usage</h2>
-                                    <p className="text-sm text-[#472b20]/60 mt-1">
-                                        {isFree ? "Your current usage and limits" : "Your current usage and limits for this billing period"}
-                                    </p>
-                                </div>
-                                <Button
-                                    onClick={() => setShowAddonsModal(true)}
-                                    className="bg-[#472b20] hover:bg-[#5d3a2c] text-white font-medium  transition-all rounded-md"
-                                >
-                                    Buy Credits
-                                </Button>
+                            <div className="mb-6">
+                                <h2 className="text-lg font-semibold text-[#472b20]">Usage</h2>
+                                <p className="text-sm text-[#472b20]/60 mt-1">
+                                    {isFree ? "Your current usage and limits" : "Your current usage and limits for this billing period"}
+                                </p>
                             </div>
 
                             <div className="space-y-6">

@@ -42,6 +42,7 @@ import AnnouncementBanner from "@/components/AnnouncementBanner";
 import NotificationManagement from "./pages/admin/NotificationManagement";
 import ImageLibrary from "./pages/admin/ImageLibrary";
 import KnowledgeBase from "./pages/admin/KnowledgeBase";
+import TopicSuggestions from "./pages/admin/TopicSuggestions";
 
 const queryClient = new QueryClient();
 
@@ -162,6 +163,7 @@ const App = () => {
                                             <Route path="images"       element={<ImageLibrary />} />
                                             <Route path="payments"     element={<PaymentHistory />} />
                                             <Route path="knowledge-base" element={<KnowledgeBase />} />
+                                            <Route path="topics"        element={<TopicSuggestions />} />
                                         </Route>
 
                                         {/* Unknown paths → back to landing */}

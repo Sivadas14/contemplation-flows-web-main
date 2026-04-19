@@ -316,6 +316,10 @@ def get_app() -> FastAPI:
     app.add_api_route("/api/admin/upload", admin_svc.upload_source_pdfs, methods=["POST"], tags=["admin"])
     # Unauthenticated bootstrap — promotes a user to ADMIN via shared secret
     app.add_api_route("/api/admin/make-admin", admin_svc.make_admin, methods=["POST"], tags=["admin"])
+    app.add_api_route("/api/admin/suggested-topics", admin_svc.list_suggested_topics, methods=["GET"], tags=["admin"])
+    app.add_api_route("/api/admin/suggested-topics/{topic_id}", admin_svc.update_suggested_topic, methods=["PATCH"], tags=["admin"])
+    # Public: approved dynamic topics for Chat UI
+    app.add_api_route("/api/topics/dynamic", admin_svc.get_dynamic_topics, methods=["GET"], tags=["topics"])
     # fmt: on
 
     # Redundant health check removed (consolidated above)

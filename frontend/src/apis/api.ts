@@ -36,6 +36,10 @@ import {
     AddonSubscribeResponse,
     Notification,
     Contemplation,
+    SuggestedTopic,
+    SuggestedTopicsResponse,
+    DynamicTopic,
+    DynamicTopicsResponse,
 } from './wire';
 
 
@@ -375,6 +379,18 @@ export const adminAPI = {
         const response = await apiClient.delete(`/admin/source-data/${documentId}`);
         return response.data;
     },
+    listSuggestedTopics: async (status?: string): Promise<SuggestedTopicsResponse> => {
+        const params = status ? { status } : {};
+        const response = await apiClient.get('/admin/suggested-topics', { params });
+        return response.data;
+    },
+    updateSuggestedTopic: async (
+        topicId: string,
+        payload: { status: 'approved' | 'rejected' | 'pending'; label?: string; tab?: string }
+    ): Promise<{ success: boolean; status: string }> => {
+        const response = await apiClient.patch(`/admin/suggested-topics/${topicId}`, payload);
+        return response.data;
+    },
     getAllProfiles: async (): Promise<UserProfile[]> => {
         const response = await apiClient.get('/profiles/'); // based on user request "profiles/"
         return response.data;
@@ -655,6 +671,18 @@ export const ramanaImagesAPI = {
     },
     delete: async (id: string): Promise<void> => {
         await apiClient.delete(`/admin/ramana-images/${id}`);
+    },
+};
+
+/** Public: fetch admin-approved dynamic topic chips (no auth required). */
+export const topicsAPI = {
+    getDynamic: async (): Promise<DynamicTopic[]> => {
+        try {
+            const response = await apiClient.get('/topics/dynamic');
+            return (response.data as DynamicTopicsResponse).items ?? [];
+        } catch {
+            return [];   // Fail silently — static topics still show
+        }
     },
 };
 

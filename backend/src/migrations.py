@@ -645,6 +645,32 @@ async def _create_guest_sessions_table(session: AsyncSession) -> None:
     _log("guest_sessions table verified/created.")
 
 
+async def _create_suggested_topics_table(session: AsyncSession) -> None:
+    """
+    Idempotently create the suggested_topics table.
+    Stores novel user-question topics flagged for admin review.
+    Admin can approve → topic appears in Chat UI dynamic chips.
+    Admin can reject  → topic is discarded.
+    """
+    await session.execute(text("""
+        CREATE TABLE IF NOT EXISTS suggested_topics (
+            id              UUID        PRIMARY KEY DEFAULT gen_random_uuid(),
+            created_at      TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+            label           VARCHAR(60) NOT NULL,
+            question        TEXT        NOT NULL,
+            tab             VARCHAR(20) NOT NULL DEFAULT 'teachings',
+            status          VARCHAR(20) NOT NULL DEFAULT 'pending',
+            occurrence_count INTEGER    NOT NULL DEFAULT 1
+        )
+    """))
+    await session.execute(text(
+        "CREATE INDEX IF NOT EXISTS ix_suggested_topics_status "
+        "ON suggested_topics (status)"
+    ))
+    await session.commit()
+    _log("suggested_topics table verified/created.")
+
+
 async def run_migrations(session_factory) -> None:
     """
     Entry point called from server lifespan.
@@ -669,6 +695,7 @@ async def run_migrations(session_factory) -> None:
         await _safe_migration(session, "_create_daily_contemplations_table", _create_daily_contemplations_table)
         await _safe_migration(session, "_add_razorpay_columns", _add_razorpay_columns)
         await _safe_migration(session, "_add_content_generation_status", _add_content_generation_status)
+        await _safe_migration(session, "_create_suggested_topics_table", _create_suggested_topics_table)
 
         # ── Data migrations (depend on schema being up to date) ─────────────
         await _safe_migration(session, "_set_free_plan_limits", _set_free_plan_limits)

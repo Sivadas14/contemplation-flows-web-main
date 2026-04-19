@@ -491,3 +491,30 @@ export interface Contemplation {
     quote: string;
     question: string;
 }
+
+/** A topic suggested by user activity, pending admin review. */
+export interface SuggestedTopic {
+    id: string;
+    created_at: string;
+    label: string;
+    question: string;
+    tab: 'teachings' | 'personal';
+    status: 'pending' | 'approved' | 'rejected';
+    occurrence_count: number;
+}
+
+export interface SuggestedTopicsResponse {
+    items: SuggestedTopic[];
+    total: number;
+}
+
+/** A dynamic topic chip returned from the public /api/topics/dynamic endpoint. */
+export interface DynamicTopic {
+    label: string;
+    question: string;
+    tab: 'teachings' | 'personal';
+}
+
+export interface DynamicTopicsResponse {
+    items: DynamicTopic[];
+}

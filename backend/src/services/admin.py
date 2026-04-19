@@ -647,3 +647,99 @@ async def make_admin(
         "success": True,
         "message": f"Success — {request.email} has been promoted to ADMIN. You can now sign in via /admin/login."
     })
+
+
+# ============================================================================
+# 7. SUGGESTED TOPICS — admin review of novel user-question topics
+# ============================================================================
+
+from sqlalchemy import text as sa_text
+
+class UpdateSuggestedTopicRequest(PydanticBaseModel):
+    status: str          # "approved" | "rejected"
+    label: str | None = None   # Admin can rename the label
+    tab: str | None = None     # Admin can override tab assignment
+
+
+async def list_suggested_topics(
+    status: str | None = Query(None, description="Filter by status: pending|approved|rejected"),
+    session: AsyncSession = Depends(get_db_session_fa),
+) -> JSONResponse:
+    """GET /api/admin/suggested-topics — list topic suggestions, pending first."""
+    if status:
+        result = await session.execute(
+            sa_text(
+                "SELECT id, created_at, label, question, tab, status, occurrence_count "
+                "FROM suggested_topics WHERE status = :status "
+                "ORDER BY occurrence_count DESC, created_at DESC"
+            ),
+            {"status": status},
+        )
+    else:
+        result = await session.execute(
+            sa_text(
+                "SELECT id, created_at, label, question, tab, status, occurrence_count "
+                "FROM suggested_topics "
+                "ORDER BY CASE status WHEN 'pending' THEN 0 WHEN 'approved' THEN 1 ELSE 2 END, "
+                "occurrence_count DESC, created_at DESC"
+            )
+        )
+    rows = result.fetchall()
+    items = [
+        {
+            "id": str(r.id),
+            "created_at": r.created_at.isoformat() if r.created_at else None,
+            "label": r.label,
+            "question": r.question,
+            "tab": r.tab,
+            "status": r.status,
+            "occurrence_count": r.occurrence_count,
+        }
+        for r in rows
+    ]
+    return JSONResponse({"items": items, "total": len(items)})
+
+
+async def update_suggested_topic(
+    topic_id: str,
+    request: UpdateSuggestedTopicRequest,
+    session: AsyncSession = Depends(get_db_session_fa),
+) -> JSONResponse:
+    """PATCH /api/admin/suggested-topics/{topic_id} — approve or reject a topic."""
+    if request.status not in ("approved", "rejected", "pending"):
+        raise HTTPException(status_code=400, detail="status must be 'approved', 'rejected', or 'pending'")
+
+    # Build update dynamically
+    updates = {"status": request.status, "id": topic_id}
+    set_clauses = ["status = :status"]
+    if request.label:
+        set_clauses.append("label = :label")
+        updates["label"] = request.label
+    if request.tab:
+        if request.tab not in ("teachings", "personal"):
+            raise HTTPException(status_code=400, detail="tab must be 'teachings' or 'personal'")
+        set_clauses.append("tab = :tab")
+        updates["tab"] = request.tab
+
+    sql = f"UPDATE suggested_topics SET {', '.join(set_clauses)} WHERE id = :id RETURNING id"
+    result = await session.execute(sa_text(sql), updates)
+    updated = result.fetchone()
+    if not updated:
+        raise HTTPException(status_code=404, detail="Suggested topic not found")
+    await session.commit()
+    return JSONResponse({"success": True, "status": request.status})
+
+
+async def get_dynamic_topics(
+    session: AsyncSession = Depends(get_db_session_fa),
+) -> JSONResponse:
+    """GET /api/topics/dynamic — public endpoint: returns admin-approved dynamic topics."""
+    result = await session.execute(
+        sa_text(
+            "SELECT label, question, tab FROM suggested_topics "
+            "WHERE status = 'approved' ORDER BY occurrence_count DESC, created_at DESC"
+        )
+    )
+    rows = result.fetchall()
+    items = [{"label": r.label, "question": r.question, "tab": r.tab} for r in rows]
+    return JSONResponse({"items": items})

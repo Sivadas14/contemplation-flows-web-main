@@ -10,13 +10,13 @@ import InlineMeditationCreator from "@/components/InlineMeditationCreator";
 import UserMenu from "@/components/UserMenu";
 import { InlineMediaPlayer } from '@/components/InlineMediaPlayer';
 import { AddonsModal } from "@/components/billing/AddonsModal";
-import { chatAPI, contentAPI } from "@/apis/api";
+import { chatAPI, contentAPI, topicsAPI } from "@/apis/api";
 import { useUsage } from "@/contexts/UsageContext";
 import { useAuth } from "@/contexts/AuthContext";
 import { toast } from "sonner";
 import { getFullStorageUrl } from "@/lib/storage";
 import { downloadFromUrl } from "@/lib/download";
-import type { Message as APIMessage, Conversation, ConversationDetailResponse, ContentGeneration } from "@/apis/wire";
+import type { Message as APIMessage, Conversation, ConversationDetailResponse, ContentGeneration, DynamicTopic } from "@/apis/wire";
 
 // ─── Design tokens — matches Landing.tsx exactly ─────────────────────────────
 const T = {
@@ -72,6 +72,8 @@ const Chat = () => {
   const [hasProcessedInitialQuery, setHasProcessedInitialQuery] = useState(false);
   const [topicTab, setTopicTab] = useState<"teachings" | "personal">("teachings");
   const [showTopicPicker, setShowTopicPicker] = useState(false);
+  const [showMoreTopics, setShowMoreTopics] = useState(false);
+  const [dynamicTopics, setDynamicTopics] = useState<DynamicTopic[]>([]);
 
   // Inline image generation states
   const [generatingImageForMessage, setGeneratingImageForMessage] = useState<string | null>(null);
@@ -110,6 +112,11 @@ const Chat = () => {
   useEffect(() => {
     messagesRef.current = messages;
   }, [messages]);
+
+  // Load admin-approved dynamic topic chips on mount (fail silently)
+  useEffect(() => {
+    topicsAPI.getDynamic().then(setDynamicTopics).catch(() => {});
+  }, []);
 
   // Ref for the scroll container
   const scrollContainerRef = useRef<HTMLDivElement>(null);
@@ -1256,17 +1263,101 @@ const Chat = () => {
                   );
                 })}
               </div>
-              {/* Topic chips */}
-              <div style={{ display: "flex", flexWrap: "wrap", gap: "0.5rem", width: "100%" }}>
-                {(topicTab === "teachings" ? teachingTopics : personalTopics).map((topic, i) => (
-                  <button key={i} onClick={() => handleSendMessage(topic.question)}
-                    onMouseEnter={e => { (e.currentTarget as HTMLElement).style.borderColor = T.accent; (e.currentTarget as HTMLElement).style.color = T.accent; (e.currentTarget as HTMLElement).style.backgroundColor = "#FBF3EE"; }}
-                    onMouseLeave={e => { (e.currentTarget as HTMLElement).style.borderColor = T.border; (e.currentTarget as HTMLElement).style.color = T.brown; (e.currentTarget as HTMLElement).style.backgroundColor = T.card; }}
-                    style={{ padding: "0.38rem 0.9rem", borderRadius: "6px", border: `1px solid ${T.border}`, backgroundColor: T.card, fontFamily: T.sans, fontSize: "0.78rem", color: T.brown, cursor: "pointer", transition: "border-color 0.15s, color 0.15s, background-color 0.15s" }}>
-                    {topic.label}
-                  </button>
-                ))}
-              </div>
+              {/* Topic chips — first 12 visible, rest in "More topics ↓" dropdown */}
+              {(() => {
+                const staticTopics = topicTab === "teachings" ? teachingTopics : personalTopics;
+                const dynForTab = dynamicTopics
+                  .filter(t => t.tab === topicTab)
+                  .map(t => ({ label: t.label, question: t.question }));
+                const allTopics = [...staticTopics, ...dynForTab];
+                const VISIBLE_COUNT = 12;
+                const visible  = allTopics.slice(0, VISIBLE_COUNT);
+                const overflow = allTopics.slice(VISIBLE_COUNT);
+
+                const chipStyle: React.CSSProperties = {
+                  padding: "0.38rem 0.9rem",
+                  borderRadius: "6px",
+                  border: `1px solid ${T.border}`,
+                  backgroundColor: T.card,
+                  fontFamily: T.sans,
+                  fontSize: "0.78rem",
+                  color: T.brown,
+                  cursor: "pointer",
+                  transition: "border-color 0.15s, color 0.15s, background-color 0.15s",
+                };
+                const hover = (e: React.MouseEvent<HTMLButtonElement>, on: boolean) => {
+                  const el = e.currentTarget as HTMLElement;
+                  el.style.borderColor   = on ? T.accent : T.border;
+                  el.style.color         = on ? T.accent : T.brown;
+                  el.style.backgroundColor = on ? "#FBF3EE" : T.card;
+                };
+
+                return (
+                  <div style={{ display: "flex", flexWrap: "wrap", gap: "0.5rem", width: "100%", position: "relative" }}>
+                    {visible.map((topic, i) => (
+                      <button key={i}
+                        onClick={() => handleSendMessage(topic.question)}
+                        onMouseEnter={e => hover(e, true)}
+                        onMouseLeave={e => hover(e, false)}
+                        style={chipStyle}
+                      >
+                        {topic.label}
+                      </button>
+                    ))}
+
+                    {overflow.length > 0 && (
+                      <div style={{ position: "relative" }}>
+                        <button
+                          onClick={() => setShowMoreTopics(prev => !prev)}
+                          onMouseEnter={e => hover(e, true)}
+                          onMouseLeave={e => hover(e, false)}
+                          style={{
+                            ...chipStyle,
+                            fontWeight: 600,
+                            borderStyle: "dashed",
+                          }}
+                        >
+                          {showMoreTopics ? "Hide topics ↑" : `More topics ↓ (${overflow.length})`}
+                        </button>
+
+                        {showMoreTopics && (
+                          <div
+                            style={{
+                              position: "absolute",
+                              top: "calc(100% + 6px)",
+                              left: 0,
+                              zIndex: 20,
+                              backgroundColor: T.card,
+                              border: `1px solid ${T.border}`,
+                              borderRadius: "10px",
+                              padding: "0.5rem",
+                              display: "flex",
+                              flexWrap: "wrap",
+                              gap: "0.4rem",
+                              width: "min(440px, 92vw)",
+                              boxShadow: "0 4px 20px rgba(71,43,32,0.12)",
+                            }}
+                          >
+                            {overflow.map((topic, i) => (
+                              <button key={i}
+                                onClick={() => {
+                                  setShowMoreTopics(false);
+                                  handleSendMessage(topic.question);
+                                }}
+                                onMouseEnter={e => hover(e, true)}
+                                onMouseLeave={e => hover(e, false)}
+                                style={chipStyle}
+                              >
+                                {topic.label}
+                              </button>
+                            ))}
+                          </div>
+                        )}
+                      </div>
+                    )}
+                  </div>
+                );
+              })()}
             </div>
           );
         })()}

@@ -17,7 +17,7 @@ from pydantic import BaseModel
 
 from src import wire as w, db
 from src.settings import get_supabase_client, Settings,get_settings
-from src.db import get_db_session_fa
+from src.db import get_db_session_fa, get_background_session
 from src.dependencies import get_current_user
 from src.services.usage import get_usage
 from src.db import OptimizedQueries
@@ -672,9 +672,13 @@ async def _llm_chat_streaming_optimized(
 
     if not conversation.title:
         yield ta.to_openai_chunk(tt.assistant(f"<title>{conversation.title}</title>"))
-    
+
+    # Background: detect and log novel topics for admin review.
+    # Fires only when we reach here (chunks were found, library content was used).
+    asyncio.create_task(_detect_and_suggest_topic(user_message))
+
     yield "[DONE]\n\n"
-    
+
     print_profiler_summary()
 
 
@@ -770,6 +774,116 @@ def _classify_intent(
     # Everything else: spiritual, philosophical, or ambiguous → pass
     tu.logger.info(f"[INTENT] PASS — {user_message[:60]!r}")
     return True
+
+
+def _extract_topic_label(user_message: str) -> str:
+    """
+    Extract a short topic label (≤40 chars) from the user's question.
+    Uses the first 5–6 meaningful words, stripped of leading question words.
+    No LLM call — instant and free.
+    """
+    SKIP_STARTS = (
+        "what", "how", "why", "who", "when", "where", "can you", "could you",
+        "please", "tell me", "explain", "describe", "i want to know", "do you",
+        "did", "is", "are", "was", "were", "will", "would", "should",
+    )
+    cleaned = user_message.strip().rstrip("?").strip()
+    lower = cleaned.lower()
+
+    # Remove leading question words
+    for skip in SKIP_STARTS:
+        if lower.startswith(skip + " "):
+            cleaned = cleaned[len(skip):].strip()
+            lower = cleaned.lower()
+            break
+
+    # Take first 6 words, Title Case
+    words = cleaned.split()
+    label = " ".join(words[:6])
+    if len(words) > 6:
+        label += "…"
+
+    # Hard cap at 40 chars
+    if len(label) > 40:
+        label = label[:37] + "…"
+
+    return label.title() if label else user_message[:40]
+
+
+def _classify_topic_tab(user_message: str) -> str:
+    """
+    Classify whether the question belongs to 'teachings' or 'personal' tab.
+    Personal: first-person emotional or experiential questions.
+    Teachings: conceptual / doctrinal questions about Ramana's teachings.
+    """
+    lower = user_message.lower()
+    PERSONAL_SIGNALS = [
+        " i ", " i'm ", " i am ", " i feel ", " i'm feeling ", " i struggle ",
+        " i am struggling ", " my ", " me ", " myself ", " i've ", " i have ",
+        " i was ", " i cannot ", " i can't ", " i don't ", " i do not ",
+        " afraid ", " anxious ", " depressed ", " lonely ", " lost ", " angry ",
+        " jealous ", " guilty ", " resentful ", " confused ", " burnout ",
+    ]
+    if any(sig in f" {lower} " for sig in PERSONAL_SIGNALS):
+        return "personal"
+    return "teachings"
+
+
+async def _detect_and_suggest_topic(user_message: str) -> None:
+    """
+    Background task: flag user_message as a potential novel topic for admin review.
+    Runs after the streaming response completes — zero impact on latency.
+
+    Guardrails (both must hold):
+      1. Message is > 25 chars (not a trivial greeting).
+      2. The extracted label doesn't already exist in suggested_topics (ILIKE).
+
+    If an identical label already exists → increment its occurrence_count.
+    If it's new → insert with status='pending'.
+    """
+    try:
+        if len(user_message.strip()) < 25:
+            return  # Skip very short messages
+
+        label = _extract_topic_label(user_message)
+        tab   = _classify_topic_tab(user_message)
+
+        async with get_background_session() as session:
+            # Check if a very similar label already exists
+            result = await session.execute(
+                text(
+                    "SELECT id, occurrence_count FROM suggested_topics "
+                    "WHERE label ILIKE :label LIMIT 1"
+                ),
+                {"label": label},
+            )
+            existing = result.fetchone()
+
+            if existing:
+                # Increment count
+                await session.execute(
+                    text(
+                        "UPDATE suggested_topics "
+                        "SET occurrence_count = occurrence_count + 1 "
+                        "WHERE id = :id"
+                    ),
+                    {"id": existing.id},
+                )
+            else:
+                # Insert new suggestion
+                await session.execute(
+                    text(
+                        "INSERT INTO suggested_topics (label, question, tab, status, occurrence_count) "
+                        "VALUES (:label, :question, :tab, 'pending', 1)"
+                    ),
+                    {"label": label, "question": user_message[:500], "tab": tab},
+                )
+
+            await session.commit()
+            tu.logger.info(f"[TOPIC_SUGGEST] {'incremented' if existing else 'new'}: {label!r} ({tab})")
+
+    except Exception as e:
+        tu.logger.warning(f"[TOPIC_SUGGEST] Background task error (non-fatal): {e}")
 
 
 async def _embedding_search_optimized(

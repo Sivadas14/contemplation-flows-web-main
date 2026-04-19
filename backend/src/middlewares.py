@@ -574,6 +574,7 @@ async def jwt_auth_middleware(request: Request, call_next):
         "/api/subscriptions/razorpay-webhook",
         "/api/notification-bar/",
         "/api/contemplation/",    # Public — same quote for all users, no auth needed
+        "/api/newsletter/",       # Public — no auth needed to subscribe
         "/health",
         "/api/admin/make-admin",  # Bootstrap endpoint — secured by admin_secret, not JWT
         "/api/chat/guest",        # Public guest chat — rate-limited by IP in the endpoint itself

@@ -480,100 +480,109 @@ async def _force_plan_limits_raw_sql(session: AsyncSession) -> None:
 
 async def _update_plan_feature_texts(session: AsyncSession) -> None:
     """
-    Update plan_features table:
+    Authoritatively replace ALL plan_features rows with correct content.
 
-    FREE / Explore:
-      - Remove ALL meditation-related rows (audio and video) — no meditation on free plan.
-        Users must upgrade to Seeker to access audio/video meditation.
+    Strategy: DELETE EVERYTHING for each plan, then INSERT the exact desired
+    rows. No pattern-matching — this handles whatever text the live DB has.
 
-    Seeker (BASIC):
-      - Remove old combined-minutes lines
-      - Ensure exactly: 'Audio meditation', 'Video meditation',
-        '(combined limit of 30 minutes)'
+    FREE / Explore:   20 conversations (lifetime) · 5 contemplation cards
+                      (no meditation — must upgrade)
 
-    Devotee (PRO):
-      - Remove old combined-minutes lines
-      - Ensure exactly: 'Audio meditation', 'Video meditation',
-        '(combined limit of 60 minutes)'
+    Seeker MONTHLY:   150 conversations / month · Unlimited contemplation cards
+                      Audio meditation · Video meditation
+                      (combined limit of 30 minutes) · Resets every month
 
-    Idempotent — safe to run on every startup.
+    Seeker YEARLY:    150 conversations / month (1 800/yr) · Unlimited cards
+                      Audio meditation · Video meditation
+                      (combined limit of 30 minutes) · Save 33% vs monthly billing
+
+    Devotee MONTHLY:  Unlimited conversations · Unlimited contemplation cards
+                      Audio meditation · Video meditation
+                      (combined limit of 60 minutes) · Resets every month
+                      Priority support
+
+    Devotee YEARLY:   Unlimited conversations · Unlimited contemplation cards
+                      Audio meditation · Video meditation
+                      (combined limit of 60 minutes) · Save 33% vs monthly billing
+                      Priority support
+
+    Idempotent — the DELETE+INSERT produces the same result every time.
     """
 
-    # ── FREE: remove ALL meditation rows (audio and video) ────────────────────
-    await session.execute(text("""
-        DELETE FROM plan_features
-         WHERE plan_id IN (SELECT id FROM plans WHERE plan_type = 'FREE')
-           AND (
-               feature_text ILIKE '%meditation%'
-            OR feature_text ILIKE '%audio%'
-            OR feature_text ILIKE '%video%'
-            OR feature_text ILIKE '%min%'
-           )
+    # Desired feature texts per plan (plan_type, billing_cycle) → [texts in order]
+    PLAN_FEATURES: dict = {
+        ('FREE',  'FREE'):    [
+            '20 conversations (lifetime)',
+            '5 contemplation cards',
+        ],
+        ('BASIC', 'MONTHLY'): [
+            '150 conversations / month',
+            'Unlimited contemplation cards',
+            'Audio meditation',
+            'Video meditation',
+            '(combined limit of 30 minutes)',
+            'Resets every month',
+        ],
+        ('BASIC', 'YEARLY'):  [
+            '150 conversations / month (1 800/yr)',
+            'Unlimited contemplation cards',
+            'Audio meditation',
+            'Video meditation',
+            '(combined limit of 30 minutes)',
+            'Save 33% vs monthly billing',
+        ],
+        ('PRO',   'MONTHLY'): [
+            'Unlimited conversations',
+            'Unlimited contemplation cards',
+            'Audio meditation',
+            'Video meditation',
+            '(combined limit of 60 minutes)',
+            'Resets every month',
+            'Priority support',
+        ],
+        ('PRO',   'YEARLY'):  [
+            'Unlimited conversations',
+            'Unlimited contemplation cards',
+            'Audio meditation',
+            'Video meditation',
+            '(combined limit of 60 minutes)',
+            'Save 33% vs monthly billing',
+            'Priority support',
+        ],
+    }
+
+    # Fetch all plans once
+    result = await session.execute(text("""
+        SELECT id, plan_type, billing_cycle FROM plans
     """))
+    db_plans = result.fetchall()
 
-    # ── BASIC (Seeker): remove old meditation / minutes lines ─────────────────
-    await session.execute(text("""
-        DELETE FROM plan_features
-         WHERE plan_id IN (SELECT id FROM plans WHERE plan_type = 'BASIC')
-           AND (
-               feature_text ILIKE '%meditation%'
-            OR feature_text ILIKE '%audio%'
-            OR feature_text ILIKE '%video%'
-            OR feature_text ILIKE '%min%'
-            OR feature_text ILIKE '%combined%'
-           )
-    """))
+    for plan_row in db_plans:
+        plan_id       = plan_row.id
+        plan_type     = plan_row.plan_type
+        billing_cycle = plan_row.billing_cycle
 
-    # ── PRO (Devotee): remove old meditation / minutes lines ──────────────────
-    await session.execute(text("""
-        DELETE FROM plan_features
-         WHERE plan_id IN (SELECT id FROM plans WHERE plan_type = 'PRO')
-           AND (
-               feature_text ILIKE '%meditation%'
-            OR feature_text ILIKE '%audio%'
-            OR feature_text ILIKE '%video%'
-            OR feature_text ILIKE '%min%'
-            OR feature_text ILIKE '%combined%'
-           )
-    """))
+        key = (plan_type, billing_cycle)
+        desired = PLAN_FEATURES.get(key)
+        if desired is None:
+            # Unknown plan type/cycle — leave untouched
+            _log(f"Skipping unknown plan {plan_type}/{billing_cycle} (id={plan_id})")
+            continue
 
-    await session.commit()
+        # 1. Delete ALL existing features for this plan
+        await session.execute(
+            text("DELETE FROM plan_features WHERE plan_id = :pid"),
+            {"pid": plan_id}
+        )
 
-    # ── BASIC (Seeker): insert Audio meditation, Video meditation, limit line ──
-    for text_val in [
-        'Audio meditation',
-        'Video meditation',
-        '(combined limit of 30 minutes)',
-    ]:
-        await session.execute(text("""
-            INSERT INTO plan_features (feature_text, plan_id)
-            SELECT :txt, p.id
-              FROM plans p
-             WHERE p.plan_type = 'BASIC'
-               AND NOT EXISTS (
-                   SELECT 1 FROM plan_features pf
-                    WHERE pf.plan_id = p.id
-                      AND pf.feature_text = :txt
-               )
-        """), {"txt": text_val})
+        # 2. Insert desired features in order
+        for feature_text in desired:
+            await session.execute(
+                text("INSERT INTO plan_features (feature_text, plan_id) VALUES (:txt, :pid)"),
+                {"txt": feature_text, "pid": plan_id}
+            )
 
-    # ── PRO (Devotee): insert Audio meditation, Video meditation, limit line ───
-    for text_val in [
-        'Audio meditation',
-        'Video meditation',
-        '(combined limit of 60 minutes)',
-    ]:
-        await session.execute(text("""
-            INSERT INTO plan_features (feature_text, plan_id)
-            SELECT :txt, p.id
-              FROM plans p
-             WHERE p.plan_type = 'PRO'
-               AND NOT EXISTS (
-                   SELECT 1 FROM plan_features pf
-                    WHERE pf.plan_id = p.id
-                      AND pf.feature_text = :txt
-               )
-        """), {"txt": text_val})
+        _log(f"Replaced features for {plan_type}/{billing_cycle} (id={plan_id}) → {len(desired)} rows")
 
     await session.commit()
 

@@ -563,37 +563,9 @@ export const PlansModal: React.FC<PlansModalProps> = ({ isOpen, onClose, onSucce
                             </div>
                         </div>
 
-                        {/* Plans Grid */}
-                        <div className="grid grid-cols-1 md:grid-cols-3 gap-6 pt-4">
-                            {/* Free Plan */}
-                            {freePlan && (
-                                <div
-                                    className={`p-8 rounded-xl border-2 flex flex-col bg-white ${currentPlanDetails?.id === freePlan.id
-                                        ? 'border-[#D05E2D] '
-                                        : 'border-transparent '
-                                        }`}
-                                >
-                                    <h2 className="text-2xl font-heading font-bold text-[#472b20] mb-2">{freePlan.name}</h2>
-                                    <div className="my-2">
-                                        <span className="text-5xl font-heading font-bold text-[#472b20]">Free</span>
-                                    </div>
-                                    <ul className="space-y-4 mb-8 flex-grow">
-                                        {freePlan.features.map((feature, index) => (
-                                            <FeatureListItem key={feature.id || index} text={feature.feature_text} isPremium={false} />
-                                        ))}
-                                    </ul>
-                                    {currentPlanDetails?.id === freePlan.id ? (
-                                        <div className="w-full py-4 text-center bg-[#FDF4EF] text-[#D05E2D] font-bold rounded-xl mt-auto">
-                                            Your Current Plan
-                                        </div>
-                                    ) : (
-                                        <>
-                                        </>
-                                    )}
-                                </div>
-                            )}
-
-                            {/* Paid Plans (Pro, Basic) */}
+                        {/* Plans Grid — Free plan not shown; logged-in users are upgrading */}
+                        <div className="grid grid-cols-1 md:grid-cols-2 gap-6 pt-4 max-w-3xl mx-auto w-full">
+                            {/* Paid Plans (Seeker, Devotee) */}
                             {paidPlans.map(plan => {
                                 const price = getPlanPrice(plan);
                                 const actionType = getPlanActionType(plan);

@@ -175,7 +175,7 @@ const Register: React.FC = () => {
       if (response.success) {
         if (response.requiresEmailConfirmation) {
           setStep('otp');
-          setSuccess("Account created! Please enter the 6-digit code sent to your email.");
+          setSuccess("");
         } else {
           setSuccess("Registration successful! Redirecting…");
           setTimeout(() => navigate('/home'), 1500);
@@ -471,71 +471,78 @@ const Register: React.FC = () => {
           </>
         )}
 
-        {/* ── OTP VERIFICATION STEP ─────────────────────────────────── */}
+        {/* ── EMAIL CONFIRMATION PENDING STEP ───────────────────────── */}
         {step === 'otp' && (
           <>
-            <h2 style={{ fontFamily: T.serif, fontSize: "1.5rem", color: T.brown, marginTop: 0, marginBottom: "0.3rem" }}>
-              Verify Your Email
+            {/* Envelope icon */}
+            <div style={{ textAlign: "center", marginBottom: "1.25rem" }}>
+              <svg width="52" height="52" viewBox="0 0 52 52" fill="none" xmlns="http://www.w3.org/2000/svg">
+                <rect width="52" height="52" rx="26" fill="#F5F0EC"/>
+                <path d="M13 17h26a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H13a2 2 0 0 1-2-2V19a2 2 0 0 1 2-2z" stroke="#B85A2D" strokeWidth="1.5" fill="none"/>
+                <path d="M39 19 26 28 13 19" stroke="#B85A2D" strokeWidth="1.5" strokeLinecap="round"/>
+              </svg>
+            </div>
+
+            <h2 style={{ fontFamily: T.serif, fontSize: "1.5rem", color: T.brown, marginTop: 0, marginBottom: "0.3rem", textAlign: "center" }}>
+              Check Your Email
             </h2>
-            <p style={{ fontFamily: T.sans, color: T.muted, fontSize: "0.85rem", marginTop: 0, marginBottom: "1.5rem" }}>
-              We sent a 6-digit code to <strong style={{ color: T.brown }}>{email}</strong>. Check your spam folder if you don't see it.
+            <p style={{ fontFamily: T.sans, color: T.muted, fontSize: "0.85rem", marginTop: 0, marginBottom: "1.5rem", textAlign: "center", lineHeight: 1.6 }}>
+              We sent a confirmation link to{" "}
+              <strong style={{ color: T.brown }}>{email}</strong>.
+              <br />
+              Click the link in the email to activate your account.
             </p>
 
+            {/* Tips box */}
+            <div style={{ backgroundColor: "#FAF6F3", border: `1px solid ${T.border}`, borderRadius: "4px", padding: "0.9rem 1rem", marginBottom: "1rem" }}>
+              <p style={{ fontFamily: T.sans, fontSize: "0.8rem", color: T.muted, margin: 0, lineHeight: 1.7 }}>
+                <strong style={{ color: T.brown }}>Didn't receive it?</strong>
+                <br />
+                • Check your <strong>spam / junk</strong> folder
+                <br />
+                • Make sure <strong>{email}</strong> is correct
+                <br />
+                • Wait a minute and try resending below
+              </p>
+            </div>
+
             {success && (
-              <p style={{ color: "#2E7D32", fontFamily: T.sans, fontSize: "0.84rem", marginBottom: "1rem" }}>{success}</p>
+              <p style={{ color: "#2E7D32", fontFamily: T.sans, fontSize: "0.84rem", marginBottom: "0.75rem", textAlign: "center" }}>{success}</p>
             )}
 
-            <form onSubmit={handleVerifyOtp} style={{ display: "flex", flexDirection: "column", gap: "1rem" }}>
-              <input
-                id="otp-code"
-                type="text"
-                value={otp}
-                onChange={e => setOtp(e.target.value.replace(/\D/g, '').slice(0, 6))}
-                placeholder="6-digit code"
-                disabled={isLoading}
-                maxLength={6}
-                required
-                style={{ ...inputStyle, textAlign: "center", letterSpacing: "0.35em", fontSize: "1.3rem", fontFamily: "monospace", padding: "0.85rem" }}
-              />
-
-              <div style={{ display: "flex", justifyContent: "center", alignItems: "center", gap: "0.5rem" }}>
-                <span style={{ fontFamily: T.sans, color: T.muted, fontSize: "0.83rem" }}>Didn't receive it?</span>
-                <button
-                  type="button"
-                  onClick={handleResendOtp}
-                  disabled={isLoading || resendCooldown > 0}
-                  style={{
-                    background: "none",
-                    border: "none",
-                    color: resendCooldown > 0 ? T.muted : T.accent,
-                    fontFamily: T.sans,
-                    fontSize: "0.83rem",
-                    fontWeight: 600,
-                    cursor: resendCooldown > 0 ? "default" : "pointer",
-                    padding: 0,
-                  }}
-                >
-                  {resendCooldown > 0 ? `Resend in ${resendCooldown}s` : "Resend"}
-                </button>
+            {error && (
+              <div style={{ backgroundColor: "#FEF2EE", border: "1px solid #F5C4B2", borderRadius: "4px", padding: "0.75rem 1rem", marginBottom: "0.75rem" }}>
+                <p style={{ color: "#8B3225", fontFamily: T.sans, fontSize: "0.84rem", margin: 0, textAlign: "center" }}>{error}</p>
               </div>
+            )}
 
-              {error && (
-                <div style={{ backgroundColor: "#FEF2EE", border: "1px solid #F5C4B2", borderRadius: "4px", padding: "0.75rem 1rem" }}>
-                  <p style={{ color: "#8B3225", fontFamily: T.sans, fontSize: "0.84rem", margin: 0, textAlign: "center" }}>{error}</p>
-                </div>
-              )}
+            {/* Resend button */}
+            <button
+              type="button"
+              onClick={handleResendOtp}
+              disabled={isLoading || resendCooldown > 0}
+              style={{
+                ...btnPrimary,
+                opacity: (isLoading || resendCooldown > 0) ? 0.55 : 1,
+                cursor: (isLoading || resendCooldown > 0) ? "default" : "pointer",
+                marginBottom: "0.75rem",
+              }}
+            >
+              {isLoading
+                ? "Sending…"
+                : resendCooldown > 0
+                  ? `Resend link in ${resendCooldown}s`
+                  : "Resend Confirmation Email"}
+            </button>
 
-              <div style={{ display: "flex", gap: "0.75rem", marginTop: "0.25rem" }}>
-                <button type="button" onClick={() => { setStep('form'); setOtp(''); setError(''); setSuccess(''); }}
-                  disabled={isLoading} style={{ ...btnOutline, flex: 1 }}>
-                  Back
-                </button>
-                <button type="submit" disabled={isLoading || otp.length !== 6}
-                  style={{ ...btnPrimary, flex: 1, opacity: (isLoading || otp.length !== 6) ? 0.55 : 1 }}>
-                  {isLoading ? "Verifying…" : "Verify Email"}
-                </button>
-              </div>
-            </form>
+            <button
+              type="button"
+              onClick={() => { setStep('form'); setOtp(''); setError(''); setSuccess(''); setResendCooldown(0); }}
+              disabled={isLoading}
+              style={{ ...btnOutline }}
+            >
+              ← Back to Registration
+            </button>
           </>
         )}
       </div>

@@ -2,7 +2,7 @@ import { useState, useEffect, useCallback, useRef } from "react";
 import { useLocation, useNavigate, useParams } from "react-router-dom";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import { Pencil, Save, Volume2, Mic, ArrowRight, ArrowLeft, Image as ImageIcon, Music, Video, Download, Loader2, Sparkles, Brain, Timer, BookOpen, PlayIcon, MusicIcon, LayoutGrid, X } from "lucide-react";
+import { Pencil, Save, Volume2, Mic, ArrowRight, ArrowLeft, Image as ImageIcon, Music, Video, Download, Loader2, Sparkles, Brain, Timer, BookOpen, PlayIcon, MusicIcon, LayoutGrid, X, MessageCircle } from "lucide-react";
 import { teachingTopics, personalTopics } from "@/data/chatTopics";
 import ChatMessage from "@/components/ChatMessage";
 import ExploreMore from "@/components/ExploreMore";
@@ -12,6 +12,7 @@ import { InlineMediaPlayer } from '@/components/InlineMediaPlayer';
 import { AddonsModal } from "@/components/billing/AddonsModal";
 import { chatAPI, contentAPI } from "@/apis/api";
 import { useUsage } from "@/contexts/UsageContext";
+import { useAuth } from "@/contexts/AuthContext";
 import { toast } from "sonner";
 import { getFullStorageUrl } from "@/lib/storage";
 import { downloadFromUrl } from "@/lib/download";
@@ -51,6 +52,11 @@ const Chat = () => {
   const navigate = useNavigate();
   const { conversationId } = useParams<{ conversationId: string }>();
   const { usage, refreshUsage, checkQuota, setShowPlansModal } = useUsage();
+  const { userProfile } = useAuth();
+
+  // Plan state — used to drive the post-login welcome / paywall screens
+  const isFree = usage?.plan_type === 'FREE';
+  const paidExhausted = !isFree && typeof usage?.conversations?.remaining === 'number' && usage.conversations.remaining <= 0;
   const [messages, setMessages] = useState<Message[]>([]);
   const [currentInput, setCurrentInput] = useState("");
   const [isThinking, setIsThinking] = useState(false);
@@ -1068,135 +1074,202 @@ const Chat = () => {
       {/* Messages Container */}
       <div className="flex-1 p-4 md:p-6 max-w-[816px] mx-auto w-full">
 
-        {!isLoadingConversation && messages.length === 0 && (
-          <div style={{
-            display: "flex",
-            flexDirection: "column",
-            alignItems: "center",
-            width: "100%",
-            maxWidth: "680px",
-            margin: "0 auto",
-            padding: "2.5rem 1.25rem 2rem",
-            fontFamily: T.sans,
-          }}>
-            {/* Brand link */}
-            <a
-              href="https://www.arunachalasamudra.in"
-              style={{
-                fontFamily: T.serif,
-                fontSize: "1rem",
-                color: T.muted,
-                textDecoration: "none",
-                letterSpacing: "-0.01em",
-                marginBottom: "0.5rem",
-              }}
-            >
-              Arunachala Samudra
-            </a>
-
-            {/* Main heading */}
-            <h1 style={{
-              fontFamily: T.serif,
-              fontSize: "clamp(1.9rem, 5vw, 3.25rem)",
-              color: T.brown,
-              margin: "0 0 0.45rem",
-              textAlign: "center",
-              lineHeight: 1.1,
-              letterSpacing: "-0.01em",
-            }}>
-              Wisdom AI
-            </h1>
-
-            {/* Tagline */}
-            <p style={{
-              fontFamily: T.sans,
-              fontSize: "0.7rem",
-              color: T.muted,
-              letterSpacing: "0.12em",
-              textTransform: "uppercase",
-              margin: "0 0 0.75rem",
-            }}>
-              Ask anything about Sri Ramana Maharshi's teachings
-            </p>
-
-            {/* Thin rule */}
-            <div style={{ width: "100%", borderTop: `1px solid ${T.border}`, margin: "0.5rem 0 1.5rem" }} />
-
-            {/* Description */}
-            <p style={{
-              fontFamily: T.sans,
-              fontSize: "0.875rem",
-              color: T.muted,
-              lineHeight: 1.75,
-              textAlign: "center",
-              marginBottom: "2rem",
-            }}>
-              Your guide to the wisdom of Arunachala. Choose a topic below or type your
-              own question — every response is rooted in Bhagavan Ramana Maharshi's teachings.
-            </p>
-
-            {/* Tabs */}
-            <div style={{ width: "100%", borderBottom: `1px solid ${T.border}`, display: "flex", marginBottom: "1.1rem" }}>
-              {(["teachings", "personal"] as const).map((tab) => {
-                const active = topicTab === tab;
-                return (
-                  <button
-                    key={tab}
-                    onClick={() => setTopicTab(tab)}
-                    style={{
-                      padding: "0.5rem 1.1rem",
-                      fontFamily: T.sans,
-                      fontSize: "0.83rem",
-                      fontWeight: 600,
-                      color: active ? T.accent : T.muted,
-                      background: "none",
-                      border: "none",
-                      borderBottom: active ? `2px solid ${T.accent}` : "2px solid transparent",
-                      marginBottom: "-1px",
-                      cursor: "pointer",
-                      transition: "color 0.15s",
-                    }}
-                  >
-                    {tab === "teachings" ? "Ramana's Teachings" : "What I'm Facing"}
-                  </button>
-                );
-              })}
+        {!isLoadingConversation && messages.length === 0 && (() => {
+          // ── Shared header used by all three empty-state screens ────────────
+          const PageHeader = () => (
+            <div style={{ display: "flex", flexDirection: "column", alignItems: "center", width: "100%" }}>
+              <a href="https://www.arunachalasamudra.in" style={{ fontFamily: T.serif, fontSize: "1rem", color: T.muted, textDecoration: "none", letterSpacing: "-0.01em", marginBottom: "0.5rem" }}>
+                Arunachala Samudra
+              </a>
+              <h1 style={{ fontFamily: T.serif, fontSize: "clamp(1.9rem, 5vw, 3.25rem)", color: T.brown, margin: "0 0 0.45rem", textAlign: "center", lineHeight: 1.1, letterSpacing: "-0.01em" }}>
+                Wisdom AI
+              </h1>
+              <p style={{ fontFamily: T.sans, fontSize: "0.7rem", color: T.muted, letterSpacing: "0.12em", textTransform: "uppercase", margin: "0 0 0.75rem" }}>
+                Ask anything about Sri Ramana Maharshi's teachings
+              </p>
+              <div style={{ width: "100%", borderTop: `1px solid ${T.border}`, margin: "0.5rem 0 1.75rem" }} />
             </div>
+          );
 
-            {/* Topic chips */}
-            <div style={{ display: "flex", flexWrap: "wrap", gap: "0.5rem", width: "100%" }}>
-              {(topicTab === "teachings" ? teachingTopics : personalTopics).map((topic, i) => (
+          // ── Shared footer ──────────────────────────────────────────────────
+          const PageFooter = () => (
+            <p style={{ fontFamily: T.sans, fontSize: "0.78rem", color: T.muted, textAlign: "center", marginTop: "1.75rem" }}>
+              Need help or have a question? Write to us at{" "}
+              <a href="mailto:info@arunachalasamudra.in" style={{ color: T.accent, textDecoration: "none" }}>
+                info@arunachalasamudra.in
+              </a>
+            </p>
+          );
+
+          // ── State 1: FREE / unsubscribed — Portal Welcome Screen ───────────
+          if (isFree) {
+            const firstName = userProfile?.name?.split(" ")[0] || null;
+            const features = [
+              {
+                icon: <MessageCircle size={20} color={T.accent} />,
+                title: "Wisdom Conversations",
+                body: "Ask anything — about self-inquiry, the nature of the mind, surrender, or whatever you are facing in life. Every response is drawn exclusively from Bhagavan's authenticated library of texts.",
+              },
+              {
+                icon: <Sparkles size={20} color={T.accent} />,
+                title: "Contemplation Cards",
+                body: "After a meaningful exchange, receive a visual card carrying the essence of what Bhagavan said — designed to be kept close, revisited, and held in silence.",
+              },
+              {
+                icon: <Music size={20} color={T.accent} />,
+                title: "Sacred Audio",
+                body: "Guided meditations rooted in Ramana's teachings and sacred chants from the ashram tradition, offered as a companion to your inner practice.",
+              },
+              {
+                icon: <Video size={20} color={T.accent} />,
+                title: "Sacred Video",
+                body: "Visual journeys — the mountain, the texts, the silence — curated to support your practice and deepen your connection to Arunachala.",
+              },
+            ];
+            const steps = [
+              "Choose a topic from Ramana's Teachings or What I'm Facing — or simply type your own question in the chat.",
+              "Read slowly. These are not quick answers — they are pointers. Let each response settle before asking the next.",
+              "After a meaningful exchange, generate a Contemplation Card to carry the teaching with you through the day.",
+              "Explore the Library for curated texts, guided materials, and deeper resources.",
+              "Come back. The teaching deepens with each conversation.",
+            ];
+            return (
+              <div style={{ display: "flex", flexDirection: "column", alignItems: "center", width: "100%", maxWidth: "680px", margin: "0 auto", padding: "2.5rem 1.25rem 3rem", fontFamily: T.sans }}>
+                <PageHeader />
+
+                {/* Greeting */}
+                {firstName && (
+                  <p style={{ fontFamily: T.serif, fontSize: "1.1rem", color: T.brown, marginBottom: "1rem", textAlign: "center" }}>
+                    Welcome, {firstName}.
+                  </p>
+                )}
+
+                {/* Intro paragraph */}
+                <p style={{ fontSize: "0.875rem", color: T.muted, lineHeight: 1.8, textAlign: "center", marginBottom: "2rem" }}>
+                  You have already glimpsed what is here — a doorway into Bhagavan's teachings, alive and responsive.
+                  Inside, the full portal awaits: conversations rooted in the authenticated texts, contemplation cards
+                  to carry the teaching through your day, sacred audio and video to deepen your practice. This is not
+                  information about the Self — it is a living invitation toward it.
+                </p>
+
+                {/* What's Inside */}
+                <p style={{ fontFamily: T.sans, fontSize: "0.68rem", color: T.muted, letterSpacing: "0.14em", textTransform: "uppercase", marginBottom: "1rem", alignSelf: "flex-start" }}>
+                  What's Inside
+                </p>
+                <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(280px, 1fr))", gap: "0.85rem", width: "100%", marginBottom: "2rem" }}>
+                  {features.map((f, i) => (
+                    <div key={i} style={{ backgroundColor: T.card, border: `1px solid ${T.border}`, borderRadius: "6px", padding: "1.1rem 1.2rem" }}>
+                      <div style={{ marginBottom: "0.6rem" }}>{f.icon}</div>
+                      <p style={{ fontFamily: T.serif, fontSize: "1rem", color: T.brown, margin: "0 0 0.4rem", letterSpacing: "-0.01em" }}>{f.title}</p>
+                      <p style={{ fontSize: "0.8rem", color: T.muted, lineHeight: 1.7, margin: 0 }}>{f.body}</p>
+                    </div>
+                  ))}
+                </div>
+
+                <div style={{ width: "100%", borderTop: `1px solid ${T.border}`, margin: "0 0 1.75rem" }} />
+
+                {/* How to use it */}
+                <p style={{ fontFamily: T.sans, fontSize: "0.68rem", color: T.muted, letterSpacing: "0.14em", textTransform: "uppercase", marginBottom: "1rem", alignSelf: "flex-start" }}>
+                  How to Use It Most Effectively
+                </p>
+                <ol style={{ width: "100%", paddingLeft: "1.25rem", marginBottom: "2rem" }}>
+                  {steps.map((s, i) => (
+                    <li key={i} style={{ fontSize: "0.84rem", color: T.muted, lineHeight: 1.75, marginBottom: "0.5rem" }}>{s}</li>
+                  ))}
+                </ol>
+
+                <div style={{ width: "100%", borderTop: `1px solid ${T.border}`, margin: "0 0 1.75rem" }} />
+
+                {/* Tab preview */}
+                <p style={{ fontFamily: T.sans, fontSize: "0.68rem", color: T.muted, letterSpacing: "0.14em", textTransform: "uppercase", marginBottom: "1rem", alignSelf: "flex-start" }}>
+                  Explore the Conversations
+                </p>
+                <div style={{ width: "100%", display: "flex", flexDirection: "column", gap: "0.75rem", marginBottom: "2rem" }}>
+                  {[
+                    { label: "Ramana's Teachings", desc: "Topics drawn from Bhagavan's core teachings — self-inquiry, the nature of the mind, the Heart, silence, surrender, liberation, and the great texts." },
+                    { label: "What I'm Facing", desc: "Bring what you are carrying — confusion, grief, restlessness, the search for meaning — and receive guidance rooted entirely in Ramana's words." },
+                  ].map((tab) => (
+                    <div key={tab.label} style={{ display: "flex", gap: "0.85rem", alignItems: "flex-start" }}>
+                      <span style={{ display: "inline-block", marginTop: "0.25rem", padding: "0.25rem 0.65rem", borderRadius: "6px", border: `1px solid ${T.border}`, backgroundColor: T.card, fontFamily: T.sans, fontSize: "0.75rem", fontWeight: 600, color: T.brown, whiteSpace: "nowrap" }}>
+                        {tab.label}
+                      </span>
+                      <p style={{ fontSize: "0.82rem", color: T.muted, lineHeight: 1.7, margin: 0 }}>{tab.desc}</p>
+                    </div>
+                  ))}
+                </div>
+
+                <div style={{ width: "100%", borderTop: `1px solid ${T.border}`, margin: "0 0 1.75rem" }} />
+
+                {/* CTA */}
                 <button
-                  key={i}
-                  onClick={() => handleSendMessage(topic.question)}
-                  onMouseEnter={e => {
-                    (e.currentTarget as HTMLElement).style.borderColor = T.accent;
-                    (e.currentTarget as HTMLElement).style.color = T.accent;
-                    (e.currentTarget as HTMLElement).style.backgroundColor = "#FBF3EE";
-                  }}
-                  onMouseLeave={e => {
-                    (e.currentTarget as HTMLElement).style.borderColor = T.border;
-                    (e.currentTarget as HTMLElement).style.color = T.brown;
-                    (e.currentTarget as HTMLElement).style.backgroundColor = T.card;
-                  }}
-                  style={{
-                    padding: "0.38rem 0.9rem",
-                    borderRadius: "6px",
-                    border: `1px solid ${T.border}`,
-                    backgroundColor: T.card,
-                    fontFamily: T.sans,
-                    fontSize: "0.78rem",
-                    color: T.brown,
-                    cursor: "pointer",
-                    transition: "border-color 0.15s, color 0.15s, background-color 0.15s",
-                  }}
+                  onClick={() => navigate("/billing")}
+                  style={{ width: "100%", padding: "0.85rem", backgroundColor: T.accent, color: "#fff", fontFamily: T.sans, fontSize: "0.95rem", fontWeight: 600, border: "none", borderRadius: "6px", cursor: "pointer", letterSpacing: "0.01em" }}
+                  onMouseEnter={e => (e.currentTarget.style.opacity = "0.88")}
+                  onMouseLeave={e => (e.currentTarget.style.opacity = "1")}
                 >
-                  {topic.label}
+                  Begin Your Journey →
                 </button>
-              ))}
+
+                <PageFooter />
+              </div>
+            );
+          }
+
+          // ── State 2: Paid but quota exhausted ─────────────────────────────
+          if (paidExhausted) {
+            return (
+              <div style={{ display: "flex", flexDirection: "column", alignItems: "center", width: "100%", maxWidth: "560px", margin: "0 auto", padding: "2.5rem 1.25rem 3rem", fontFamily: T.sans }}>
+                <PageHeader />
+                <p style={{ fontSize: "0.875rem", color: T.muted, lineHeight: 1.8, textAlign: "center", marginBottom: "2rem" }}>
+                  You have journeyed deeply. Every conversation you have had is saved in your Chats — return to them
+                  anytime. To continue asking, exploring, and receiving, renew or upgrade your plan below.
+                </p>
+                <button
+                  onClick={() => navigate("/billing")}
+                  style={{ width: "100%", padding: "0.85rem", backgroundColor: T.accent, color: "#fff", fontFamily: T.sans, fontSize: "0.95rem", fontWeight: 600, border: "none", borderRadius: "6px", cursor: "pointer", letterSpacing: "0.01em" }}
+                  onMouseEnter={e => (e.currentTarget.style.opacity = "0.88")}
+                  onMouseLeave={e => (e.currentTarget.style.opacity = "1")}
+                >
+                  Renew Your Subscription →
+                </button>
+                <PageFooter />
+              </div>
+            );
+          }
+
+          // ── State 3: Paid with quota — normal chat home ────────────────────
+          return (
+            <div style={{ display: "flex", flexDirection: "column", alignItems: "center", width: "100%", maxWidth: "680px", margin: "0 auto", padding: "2.5rem 1.25rem 2rem", fontFamily: T.sans }}>
+              <PageHeader />
+              <p style={{ fontSize: "0.875rem", color: T.muted, lineHeight: 1.75, textAlign: "center", marginBottom: "2rem" }}>
+                Your guide to the wisdom of Arunachala. Choose a topic below or type your
+                own question — every response is rooted in Bhagavan Ramana Maharshi's teachings.
+              </p>
+              {/* Tabs */}
+              <div style={{ width: "100%", borderBottom: `1px solid ${T.border}`, display: "flex", marginBottom: "1.1rem" }}>
+                {(["teachings", "personal"] as const).map((tab) => {
+                  const active = topicTab === tab;
+                  return (
+                    <button key={tab} onClick={() => setTopicTab(tab)} style={{ padding: "0.5rem 1.1rem", fontFamily: T.sans, fontSize: "0.83rem", fontWeight: 600, color: active ? T.accent : T.muted, background: "none", border: "none", borderBottom: active ? `2px solid ${T.accent}` : "2px solid transparent", marginBottom: "-1px", cursor: "pointer", transition: "color 0.15s" }}>
+                      {tab === "teachings" ? "Ramana's Teachings" : "What I'm Facing"}
+                    </button>
+                  );
+                })}
+              </div>
+              {/* Topic chips */}
+              <div style={{ display: "flex", flexWrap: "wrap", gap: "0.5rem", width: "100%" }}>
+                {(topicTab === "teachings" ? teachingTopics : personalTopics).map((topic, i) => (
+                  <button key={i} onClick={() => handleSendMessage(topic.question)}
+                    onMouseEnter={e => { (e.currentTarget as HTMLElement).style.borderColor = T.accent; (e.currentTarget as HTMLElement).style.color = T.accent; (e.currentTarget as HTMLElement).style.backgroundColor = "#FBF3EE"; }}
+                    onMouseLeave={e => { (e.currentTarget as HTMLElement).style.borderColor = T.border; (e.currentTarget as HTMLElement).style.color = T.brown; (e.currentTarget as HTMLElement).style.backgroundColor = T.card; }}
+                    style={{ padding: "0.38rem 0.9rem", borderRadius: "6px", border: `1px solid ${T.border}`, backgroundColor: T.card, fontFamily: T.sans, fontSize: "0.78rem", color: T.brown, cursor: "pointer", transition: "border-color 0.15s, color 0.15s, background-color 0.15s" }}>
+                    {topic.label}
+                  </button>
+                ))}
+              </div>
             </div>
-          </div>
-        )}
+          );
+        })()}
 
         {!isLoadingConversation && messages.length > 0 && messages.map((message, index) => {
           const latestAssistantMessageIndex = messages.map((msg, idx) => ({ msg, idx }))
@@ -1385,8 +1458,13 @@ const Chat = () => {
 
             {/* Input with mic button — or upgrade CTA when quota exhausted,
                 or "Start new conversation" CTA when this conversation has
-                reached its 10-question depth cap. */}
+                reached its 10-question depth cap.
+                Hidden entirely for FREE / unsubscribed users (they see the
+                Portal Welcome Screen instead and are directed to billing). */}
             {(() => {
+              // FREE users: no chat input — welcome screen handles everything
+              if (isFree) return null;
+
               const chatRemaining = usage?.conversations?.remaining;
               const chatExhausted = typeof chatRemaining === 'number' && chatRemaining <= 0;
               if (chatExhausted) {

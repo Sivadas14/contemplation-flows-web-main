@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import { useAuth } from "@/contexts/AuthContext";
 
@@ -129,6 +129,23 @@ const Register: React.FC = () => {
   const [success, setSuccess] = useState("");
   const [agreedTerms, setAgreedTerms] = useState(false);
   const [agreedPrivacy, setAgreedPrivacy] = useState(false);
+  const [resendCooldown, setResendCooldown] = useState(0);
+
+  // Start 60-second cooldown when OTP step is first shown
+  useEffect(() => {
+    if (step === 'otp') {
+      setResendCooldown(60);
+    }
+  }, [step]);
+
+  // Countdown tick — each second, schedule the next decrement
+  useEffect(() => {
+    if (resendCooldown <= 0) return;
+    const timer = setTimeout(() => {
+      setResendCooldown(prev => Math.max(0, prev - 1));
+    }, 1000);
+    return () => clearTimeout(timer);
+  }, [resendCooldown]);
 
   const pwStrength = getPasswordStrength(password);
 
@@ -158,7 +175,7 @@ const Register: React.FC = () => {
       if (response.success) {
         if (response.requiresEmailConfirmation) {
           setStep('otp');
-          setSuccess("Account created! Please enter the 8-digit code sent to your email.");
+          setSuccess("Account created! Please enter the 6-digit code sent to your email.");
         } else {
           setSuccess("Registration successful! Redirecting…");
           setTimeout(() => navigate('/home'), 1500);
@@ -177,7 +194,7 @@ const Register: React.FC = () => {
   const handleVerifyOtp = async (e: React.FormEvent) => {
     e.preventDefault();
     setError("");
-    if (otp.length !== 8) { setError("Please enter the 8-digit code"); return; }
+    if (otp.length !== 6) { setError("Please enter the 6-digit code"); return; }
     setIsLoading(true);
     try {
       const response = await verifyOtp(email, otp, 'signup');
@@ -199,8 +216,12 @@ const Register: React.FC = () => {
     setIsLoading(true);
     try {
       const response = await resendOtp(email, 'signup');
-      if (response.success) setSuccess("Code resent! Check your email.");
-      else setError(response.message || "Failed to resend code.");
+      if (response.success) {
+        setSuccess("Code resent! Check your email.");
+        setResendCooldown(60);
+      } else {
+        setError(response.message || "Failed to resend code.");
+      }
     } catch (err: any) {
       setError(err.message || "Failed to resend code.");
     } finally {
@@ -457,7 +478,7 @@ const Register: React.FC = () => {
               Verify Your Email
             </h2>
             <p style={{ fontFamily: T.sans, color: T.muted, fontSize: "0.85rem", marginTop: 0, marginBottom: "1.5rem" }}>
-              We sent an 8-digit code to <strong style={{ color: T.brown }}>{email}</strong>
+              We sent a 6-digit code to <strong style={{ color: T.brown }}>{email}</strong>. Check your spam folder if you don't see it.
             </p>
 
             {success && (
@@ -469,19 +490,32 @@ const Register: React.FC = () => {
                 id="otp-code"
                 type="text"
                 value={otp}
-                onChange={e => setOtp(e.target.value.replace(/\D/g, '').slice(0, 8))}
-                placeholder="8-digit code"
+                onChange={e => setOtp(e.target.value.replace(/\D/g, '').slice(0, 6))}
+                placeholder="6-digit code"
                 disabled={isLoading}
-                maxLength={8}
+                maxLength={6}
                 required
                 style={{ ...inputStyle, textAlign: "center", letterSpacing: "0.35em", fontSize: "1.3rem", fontFamily: "monospace", padding: "0.85rem" }}
               />
 
               <div style={{ display: "flex", justifyContent: "center", alignItems: "center", gap: "0.5rem" }}>
                 <span style={{ fontFamily: T.sans, color: T.muted, fontSize: "0.83rem" }}>Didn't receive it?</span>
-                <button type="button" onClick={handleResendOtp} disabled={isLoading}
-                  style={{ background: "none", border: "none", color: T.accent, fontFamily: T.sans, fontSize: "0.83rem", fontWeight: 600, cursor: "pointer", padding: 0 }}>
-                  Resend
+                <button
+                  type="button"
+                  onClick={handleResendOtp}
+                  disabled={isLoading || resendCooldown > 0}
+                  style={{
+                    background: "none",
+                    border: "none",
+                    color: resendCooldown > 0 ? T.muted : T.accent,
+                    fontFamily: T.sans,
+                    fontSize: "0.83rem",
+                    fontWeight: 600,
+                    cursor: resendCooldown > 0 ? "default" : "pointer",
+                    padding: 0,
+                  }}
+                >
+                  {resendCooldown > 0 ? `Resend in ${resendCooldown}s` : "Resend"}
                 </button>
               </div>
 
@@ -496,8 +530,8 @@ const Register: React.FC = () => {
                   disabled={isLoading} style={{ ...btnOutline, flex: 1 }}>
                   Back
                 </button>
-                <button type="submit" disabled={isLoading || otp.length !== 8}
-                  style={{ ...btnPrimary, flex: 1, opacity: (isLoading || otp.length !== 8) ? 0.55 : 1 }}>
+                <button type="submit" disabled={isLoading || otp.length !== 6}
+                  style={{ ...btnPrimary, flex: 1, opacity: (isLoading || otp.length !== 6) ? 0.55 : 1 }}>
                   {isLoading ? "Verifying…" : "Verify Email"}
                 </button>
               </div>

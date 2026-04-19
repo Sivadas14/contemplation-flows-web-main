@@ -872,42 +872,9 @@ export const SubscriptionScreen: React.FC = () => {
                             </div>
                         </div>
 
-                        {/* Plans Grid */}
-                        <div className="grid grid-cols-1 md:grid-cols-3 gap-8 w-full max-w-6xl mb-16">
-                            {/* Free Plan */}
-                            {freePlan && (
-                                <div
-                                    className={`p-8 rounded-[2rem] border-2 flex flex-col bg-white ${currentPlanDetails?.id === freePlan.id
-                                        ? 'border-[#D05E2D] shadow-lg'
-                                        : 'border-transparent shadow-sm'
-                                        }`}
-                                >
-                                    <h2 className="text-2xl font-heading font-bold text-[#472b20] mb-2">{freePlan.name}</h2>
-                                    <div className="my-2">
-                                        <span className="text-5xl font-heading font-bold text-[#472b20]">Free</span>
-                                    </div>
-                                    <ul className="space-y-4 mb-8 flex-grow">
-                                        {freePlan.features.map((feature, index) => (
-                                            <FeatureListItem key={feature.id || index} text={feature.feature_text} isPremium={false} />
-                                        ))}
-                                    </ul>
-                                    {currentPlanDetails?.id === freePlan.id ? (
-                                        <div className="w-full py-4 text-center bg-[#FDF4EF] text-[#D05E2D] font-bold rounded-xl mt-auto">
-                                            Your Current Plan
-                                        </div>
-                                    ) : (
-                                        <div className="mt-auto"></div>
-                                    )}
-                                    <div className="mt-4 border-t border-[#ECE5DF] pt-4 text-center">
-                                        <p className="text-xs text-[#472b20]/60 mb-1 font-light italic">Facing financial hardship?</p>
-                                        <button onClick={() => setShowPwycModal(true)} className="text-[#472b20] text-sm font-semibold hover:underline">
-                                            Apply for 'Pay What You Can' Access
-                                        </button>
-                                    </div>
-                                </div>
-                            )}
-
-                            {/* Paid Plans (Pro, Basic) */}
+                        {/* Plans Grid — Free plan is not shown; logged-in users are upgrading */}
+                        <div className="grid grid-cols-1 md:grid-cols-2 gap-8 w-full max-w-4xl mb-16">
+                            {/* Paid Plans (Seeker, Devotee) */}
                             {paidPlans.map(plan => {
                                 const price = getPlanPrice(plan);
                                 const actionType = getPlanActionType(plan);

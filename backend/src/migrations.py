@@ -25,9 +25,9 @@ def _log(msg: str) -> None:
 FREE_PLAN_NAME     = "Explore"
 FREE_CHAT_LIMIT    = "20"   # 20 conversations lifetime
 FREE_CARD_LIMIT    = 5      # 5 contemplation cards
-FREE_MEDITATION    = 5      # 5 minutes lifetime (1 audio + 1 video trial)
-FREE_IS_AUDIO      = True
-FREE_IS_VIDEO      = True   # video enabled on free (trial)
+FREE_MEDITATION    = 0      # no meditation on free — must upgrade to Seeker
+FREE_IS_AUDIO      = False  # audio disabled on free plan
+FREE_IS_VIDEO      = False  # video disabled on free plan
 
 # BASIC → Seeker
 SEEKER_MONTHLY_NAME = "Seeker"
@@ -397,15 +397,15 @@ async def _force_plan_limits_raw_sql(session: AsyncSession) -> None:
 
     Idempotent: same UPDATE on every startup is a no-op when values match.
     """
-    # 1. FREE / Explore: 20 chats lifetime / 5 cards / 5 min meditation
+    # 1. FREE / Explore: 20 chats lifetime / 5 cards / no meditation
     await session.execute(text("""
         UPDATE plans
            SET name = 'Explore',
                chat_limit = '20',
                card_limit = 5,
-               max_meditation_duration = 5,
-               is_audio = TRUE,
-               is_video = TRUE
+               max_meditation_duration = 0,
+               is_audio = FALSE,
+               is_video = FALSE
          WHERE plan_type = 'FREE'
     """))
 
@@ -480,117 +480,100 @@ async def _force_plan_limits_raw_sql(session: AsyncSession) -> None:
 
 async def _update_plan_feature_texts(session: AsyncSession) -> None:
     """
-    Update plan_features table to reflect the new meditation feature wording:
+    Update plan_features table:
 
     FREE / Explore:
-      - Remove audio meditation entry (any row containing 'audio' and 'meditation' or
-        'audio meditation', plus any row matching '10 min' meditation)
-      - Video meditation entry is kept as-is
+      - Remove ALL meditation-related rows (audio and video) — no meditation on free plan.
+        Users must upgrade to Seeker to access audio/video meditation.
 
     Seeker (BASIC):
-      - Remove old combined minutes line (any row matching 'min' + 'audio' or 'video' pattern)
-      - Insert 'Video meditation' if not already present
-      - Insert '(max 30 minutes combined of video & audio)' if not already present
+      - Remove old combined-minutes lines
+      - Ensure exactly: 'Audio meditation', 'Video meditation',
+        '(combined limit of 30 minutes)'
 
     Devotee (PRO):
-      - Same removal pattern
-      - Insert 'Video meditation' if not already present
-      - Insert '(max 60 minutes combined of video & audio)' if not already present
+      - Remove old combined-minutes lines
+      - Ensure exactly: 'Audio meditation', 'Video meditation',
+        '(combined limit of 60 minutes)'
 
     Idempotent — safe to run on every startup.
     """
 
-    # ── FREE: remove audio meditation and any "X min" meditation lines ─────────
+    # ── FREE: remove ALL meditation rows (audio and video) ────────────────────
     await session.execute(text("""
         DELETE FROM plan_features
          WHERE plan_id IN (SELECT id FROM plans WHERE plan_type = 'FREE')
            AND (
-               feature_text ILIKE '%audio%meditation%'
-            OR feature_text ILIKE '%audio meditation%'
-            OR (feature_text ILIKE '%min%meditation%' AND feature_text NOT ILIKE '%video%')
-            OR (feature_text ILIKE '%meditation%min%' AND feature_text NOT ILIKE '%video%')
+               feature_text ILIKE '%meditation%'
+            OR feature_text ILIKE '%audio%'
+            OR feature_text ILIKE '%video%'
+            OR feature_text ILIKE '%min%'
            )
     """))
 
-    # ── BASIC (Seeker): remove old combined-minutes line ──────────────────────
+    # ── BASIC (Seeker): remove old meditation / minutes lines ─────────────────
     await session.execute(text("""
         DELETE FROM plan_features
          WHERE plan_id IN (SELECT id FROM plans WHERE plan_type = 'BASIC')
            AND (
-               feature_text ILIKE '%min audio%video%'
-            OR feature_text ILIKE '%min%audio + video%'
-            OR feature_text ILIKE '%audio + video%min%'
-            OR feature_text ILIKE '%30 min%meditation%'
-            OR feature_text ILIKE '%meditation%30 min%'
-            OR (feature_text ILIKE '%audio%video%month%' AND feature_text ILIKE '%min%')
+               feature_text ILIKE '%meditation%'
+            OR feature_text ILIKE '%audio%'
+            OR feature_text ILIKE '%video%'
+            OR feature_text ILIKE '%min%'
+            OR feature_text ILIKE '%combined%'
            )
     """))
 
-    # ── PRO (Devotee): remove old combined-minutes line ───────────────────────
+    # ── PRO (Devotee): remove old meditation / minutes lines ──────────────────
     await session.execute(text("""
         DELETE FROM plan_features
          WHERE plan_id IN (SELECT id FROM plans WHERE plan_type = 'PRO')
            AND (
-               feature_text ILIKE '%min audio%video%'
-            OR feature_text ILIKE '%min%audio + video%'
-            OR feature_text ILIKE '%audio + video%min%'
-            OR feature_text ILIKE '%200 min%'
-            OR feature_text ILIKE '%meditation%min%'
-            OR (feature_text ILIKE '%audio%video%month%' AND feature_text ILIKE '%min%')
+               feature_text ILIKE '%meditation%'
+            OR feature_text ILIKE '%audio%'
+            OR feature_text ILIKE '%video%'
+            OR feature_text ILIKE '%min%'
+            OR feature_text ILIKE '%combined%'
            )
     """))
 
     await session.commit()
 
-    # ── BASIC (Seeker): insert new meditation lines if not present ────────────
-    await session.execute(text("""
-        INSERT INTO plan_features (feature_text, plan_id)
-        SELECT 'Video meditation', p.id
-          FROM plans p
-         WHERE p.plan_type = 'BASIC'
-           AND NOT EXISTS (
-               SELECT 1 FROM plan_features pf
-                WHERE pf.plan_id = p.id
-                  AND pf.feature_text = 'Video meditation'
-           )
-    """))
+    # ── BASIC (Seeker): insert Audio meditation, Video meditation, limit line ──
+    for text_val in [
+        'Audio meditation',
+        'Video meditation',
+        '(combined limit of 30 minutes)',
+    ]:
+        await session.execute(text("""
+            INSERT INTO plan_features (feature_text, plan_id)
+            SELECT :txt, p.id
+              FROM plans p
+             WHERE p.plan_type = 'BASIC'
+               AND NOT EXISTS (
+                   SELECT 1 FROM plan_features pf
+                    WHERE pf.plan_id = p.id
+                      AND pf.feature_text = :txt
+               )
+        """), {"txt": text_val})
 
-    await session.execute(text("""
-        INSERT INTO plan_features (feature_text, plan_id)
-        SELECT '(max 30 minutes combined of video & audio)', p.id
-          FROM plans p
-         WHERE p.plan_type = 'BASIC'
-           AND NOT EXISTS (
-               SELECT 1 FROM plan_features pf
-                WHERE pf.plan_id = p.id
-                  AND pf.feature_text = '(max 30 minutes combined of video & audio)'
-           )
-    """))
-
-    # ── PRO (Devotee): insert new meditation lines if not present ─────────────
-    await session.execute(text("""
-        INSERT INTO plan_features (feature_text, plan_id)
-        SELECT 'Video meditation', p.id
-          FROM plans p
-         WHERE p.plan_type = 'PRO'
-           AND NOT EXISTS (
-               SELECT 1 FROM plan_features pf
-                WHERE pf.plan_id = p.id
-                  AND pf.feature_text = 'Video meditation'
-           )
-    """))
-
-    await session.execute(text("""
-        INSERT INTO plan_features (feature_text, plan_id)
-        SELECT '(max 60 minutes combined of video & audio)', p.id
-          FROM plans p
-         WHERE p.plan_type = 'PRO'
-           AND NOT EXISTS (
-               SELECT 1 FROM plan_features pf
-                WHERE pf.plan_id = p.id
-                  AND pf.feature_text = '(max 60 minutes combined of video & audio)'
-           )
-    """))
+    # ── PRO (Devotee): insert Audio meditation, Video meditation, limit line ───
+    for text_val in [
+        'Audio meditation',
+        'Video meditation',
+        '(combined limit of 60 minutes)',
+    ]:
+        await session.execute(text("""
+            INSERT INTO plan_features (feature_text, plan_id)
+            SELECT :txt, p.id
+              FROM plans p
+             WHERE p.plan_type = 'PRO'
+               AND NOT EXISTS (
+                   SELECT 1 FROM plan_features pf
+                    WHERE pf.plan_id = p.id
+                      AND pf.feature_text = :txt
+               )
+        """), {"txt": text_val})
 
     await session.commit()
 

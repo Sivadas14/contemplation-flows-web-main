@@ -114,8 +114,7 @@ export const SUBSCRIPTION_PLANS: LocalPlan[] = [
     "prices": [{ "currency": "USD", "price": 0, "plan_id": 101, "id": 201 }],
     "features": [
       { "feature_text": "20 conversations (lifetime)", "plan_id": 101, "id": 301 },
-      { "feature_text": "5 contemplation cards",       "plan_id": 101, "id": 302 },
-      { "feature_text": "1 video meditation (5 min)",  "plan_id": 101, "id": 304 }
+      { "feature_text": "5 contemplation cards",       "plan_id": 101, "id": 302 }
     ],
     "polar_plan_id": "prod_free_111111"
   },
@@ -137,11 +136,12 @@ export const SUBSCRIPTION_PLANS: LocalPlan[] = [
     "is_video": true,
     "prices": [{ "currency": "USD", "price": 4.99, "plan_id": 102, "id": 202 }],
     "features": [
-      { "feature_text": "150 conversations / month",                          "plan_id": 102, "id": 305 },
-      { "feature_text": "Unlimited contemplation cards",                      "plan_id": 102, "id": 306 },
-      { "feature_text": "Video meditation",                                   "plan_id": 102, "id": 307 },
-      { "feature_text": "(max 30 minutes combined of video & audio)",         "plan_id": 102, "id": 3071 },
-      { "feature_text": "Resets every month",                                 "plan_id": 102, "id": 308 }
+      { "feature_text": "150 conversations / month",                         "plan_id": 102, "id": 305 },
+      { "feature_text": "Unlimited contemplation cards",                     "plan_id": 102, "id": 306 },
+      { "feature_text": "Audio meditation",                                  "plan_id": 102, "id": 307 },
+      { "feature_text": "Video meditation",                                  "plan_id": 102, "id": 3071 },
+      { "feature_text": "(combined limit of 30 minutes)",                    "plan_id": 102, "id": 3072 },
+      { "feature_text": "Resets every month",                                "plan_id": 102, "id": 308 }
     ],
     "polar_plan_id": "d7e5a376-1f44-4c07-aaf9-6122e79de1ac"
   },
@@ -165,8 +165,9 @@ export const SUBSCRIPTION_PLANS: LocalPlan[] = [
     "features": [
       { "feature_text": "150 conversations / month (1 800/yr)",              "plan_id": 103, "id": 309 },
       { "feature_text": "Unlimited contemplation cards",                     "plan_id": 103, "id": 310 },
-      { "feature_text": "Video meditation",                                  "plan_id": 103, "id": 311 },
-      { "feature_text": "(max 30 minutes combined of video & audio)",        "plan_id": 103, "id": 3111 },
+      { "feature_text": "Audio meditation",                                  "plan_id": 103, "id": 311 },
+      { "feature_text": "Video meditation",                                  "plan_id": 103, "id": 3111 },
+      { "feature_text": "(combined limit of 30 minutes)",                    "plan_id": 103, "id": 3112 },
       { "feature_text": "Save 33% vs monthly billing",                      "plan_id": 103, "id": 312 }
     ],
     "polar_plan_id": "prod_basic_yearly_222222"
@@ -191,8 +192,9 @@ export const SUBSCRIPTION_PLANS: LocalPlan[] = [
     "features": [
       { "feature_text": "Unlimited conversations",                           "plan_id": 104, "id": 313 },
       { "feature_text": "Unlimited contemplation cards",                     "plan_id": 104, "id": 314 },
-      { "feature_text": "Video meditation",                                  "plan_id": 104, "id": 315 },
-      { "feature_text": "(max 60 minutes combined of video & audio)",        "plan_id": 104, "id": 3151 },
+      { "feature_text": "Audio meditation",                                  "plan_id": 104, "id": 315 },
+      { "feature_text": "Video meditation",                                  "plan_id": 104, "id": 3151 },
+      { "feature_text": "(combined limit of 60 minutes)",                    "plan_id": 104, "id": 3152 },
       { "feature_text": "Resets every month",                                "plan_id": 104, "id": 316 },
       { "feature_text": "Priority support",                                  "plan_id": 104, "id": 317 }
     ],
@@ -218,8 +220,9 @@ export const SUBSCRIPTION_PLANS: LocalPlan[] = [
     "features": [
       { "feature_text": "Unlimited conversations",                           "plan_id": 105, "id": 318 },
       { "feature_text": "Unlimited contemplation cards",                     "plan_id": 105, "id": 319 },
-      { "feature_text": "Video meditation",                                  "plan_id": 105, "id": 320 },
-      { "feature_text": "(max 60 minutes combined of video & audio)",        "plan_id": 105, "id": 3201 },
+      { "feature_text": "Audio meditation",                                  "plan_id": 105, "id": 320 },
+      { "feature_text": "Video meditation",                                  "plan_id": 105, "id": 3201 },
+      { "feature_text": "(combined limit of 60 minutes)",                    "plan_id": 105, "id": 3202 },
       { "feature_text": "Save 33% vs monthly billing",                      "plan_id": 105, "id": 321 },
       { "feature_text": "Priority support",                                  "plan_id": 105, "id": 322 }
     ],

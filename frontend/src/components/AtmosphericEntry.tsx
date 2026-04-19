@@ -1,15 +1,15 @@
 import { useEffect, useState } from "react";
 
 /**
- * AtmosphericEntry — a ~6-second sacred overlay that plays on the first
+ * AtmosphericEntry — a ~4-second sacred overlay that plays on the first
  * visit of a browser session to the public landing or the logged-in home.
  *
  * Timeline (ms):
  *   0    → cream background, nothing visible yet
  *   300  → dawn gradient + mountain silhouette fade in (800ms)
  *   1800 → tagline "Who am I?" fades in (600ms)
- *   5000 → everything fades out (1000ms)
- *   6000 → overlay unmounts, page interactive
+ *   3000 → everything fades out (1000ms)
+ *   4000 → overlay unmounts, page interactive
  *
  * Respects prefers-reduced-motion (skips instantly).
  * Dismissible by click, tap, or Escape key.
@@ -54,7 +54,7 @@ export default function AtmosphericEntry() {
     setPhase("cream");
     const t1 = window.setTimeout(() => setPhase("mountain"), 300);
     const t2 = window.setTimeout(() => setPhase("tagline"), 1800);
-    const t3 = window.setTimeout(() => setPhase("fadeout"), 5000);
+    const t3 = window.setTimeout(() => setPhase("fadeout"), 3000);
     const t4 = window.setTimeout(() => {
       setPhase("done");
       try {
@@ -62,7 +62,7 @@ export default function AtmosphericEntry() {
       } catch {
         // ignore
       }
-    }, 6000);
+    }, 4000);
 
     return () => {
       window.clearTimeout(t1);

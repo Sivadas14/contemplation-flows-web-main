@@ -499,19 +499,18 @@ async def _update_plan_feature_texts(session: AsyncSession) -> None:
     Devotee MONTHLY:  Unlimited conversations · Unlimited contemplation cards
                       Audio meditation · Video meditation
                       (combined limit of 60 minutes) · Resets every month
-                      Priority support
 
     Devotee YEARLY:   Unlimited conversations · Unlimited contemplation cards
                       Audio meditation · Video meditation
                       (combined limit of 60 minutes) · Save 33% vs monthly billing
-                      Priority support
 
     Idempotent — the DELETE+INSERT produces the same result every time.
     """
 
     # Desired feature texts per plan (plan_type, billing_cycle) → [texts in order]
+    # NOTE: FREE plan billing_cycle is stored as 'MONTHLY' in DB (no FREE enum value)
     PLAN_FEATURES: dict = {
-        ('FREE',  'FREE'):    [
+        ('FREE',  'MONTHLY'): [
             '20 conversations (lifetime)',
             '5 contemplation cards',
         ],

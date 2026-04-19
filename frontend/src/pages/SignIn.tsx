@@ -253,11 +253,11 @@ const SignIn: React.FC = () => {
     >
       {/* Brand */}
       <div style={{ marginBottom: "1.75rem", textAlign: "center" }}>
-        <Link to="/" style={{ textDecoration: "none" }}>
+        <a href="https://www.arunachalasamudra.co.in" style={{ textDecoration: "none" }}>
           <h1 style={{ fontFamily: T.serif, fontSize: "1.55rem", color: T.brown, letterSpacing: "0.02em", margin: 0 }}>
             Arunachala Samudra
           </h1>
-        </Link>
+        </a>
         <p style={{ color: T.muted, fontSize: "0.74rem", letterSpacing: "0.12em", textTransform: "uppercase", marginTop: "0.3rem", fontFamily: T.sans }}>
           Sacred Wisdom Portal
         </p>

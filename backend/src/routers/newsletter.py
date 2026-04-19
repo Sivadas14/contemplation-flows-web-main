@@ -1,7 +1,7 @@
 """
 Newsletter subscription — saves email to newsletter_subscribers table via
 the Supabase REST API (PostgREST).  Uses only Python standard-library modules
-(urllib.request / json / asyncio) — zero additional dependencies.
+(urllib.request / json / asyncio / re) — zero additional dependencies.
 
 Endpoints
 ─────────
@@ -15,11 +15,12 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import re
 import urllib.error
 import urllib.request
 
 from fastapi import APIRouter, HTTPException
-from pydantic import BaseModel, EmailStr
+from pydantic import BaseModel
 
 from src.settings import get_settings
 
@@ -27,19 +28,24 @@ logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api/newsletter", tags=["newsletter"])
 
+# Simple email validation — avoids the 'email-validator' package which is not
+# installed.  EmailStr from pydantic requires that package; using str + regex
+# instead keeps zero extra dependencies.
+_EMAIL_RE = re.compile(r"^[^@\s]+@[^@\s]+\.[^@\s]+$")
+
 
 # ────────────────────────────── health ──────────────────────────────────────
 
 @router.get("/ping")
 async def ping():
     """Zero-dependency liveness check.  Version bump proves new code is live."""
-    return {"alive": True, "version": "v4-stdlib"}
+    return {"alive": True, "version": "v5-no-emailstr"}
 
 
 # ────────────────────────────── models ──────────────────────────────────────
 
 class SubscribeRequest(BaseModel):
-    email: EmailStr
+    email: str          # plain str — validated below with regex
 
 
 class SubscribeResponse(BaseModel):
@@ -96,7 +102,12 @@ def _sb_count(supabase_url: str, api_key: str) -> int:
 @router.post("/subscribe", response_model=SubscribeResponse)
 async def subscribe(payload: SubscribeRequest):
     """Insert email into newsletter_subscribers (ignores duplicates)."""
-    email = str(payload.email).lower().strip()
+    email = payload.email.lower().strip()
+
+    # Basic format check
+    if not _EMAIL_RE.match(email):
+        raise HTTPException(status_code=422, detail="Invalid email address.")
+
     logger.info("Newsletter subscribe: %s", email)
 
     settings = get_settings()

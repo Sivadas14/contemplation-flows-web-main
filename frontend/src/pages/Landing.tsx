@@ -28,18 +28,20 @@ import {
   Menu, X, Mail, Layers, Send, Lock,
   Image as ImageIcon, Volume2, Video, Download,
 } from "lucide-react";
+import RamanaOnboardingModal, { SEEN_KEY } from "@/components/RamanaOnboardingModal";
 
 // ─── Design tokens (matching arunachalasamudra.in) ────────────────────────────
 const T = {
-  cream:     "#F5F0EC",
-  creamMid:  "#EDE5DC",
-  umber:     "#2E1208",   // deep chocolate — footer / dark sections
-  brown:     "#472B20",   // primary text / logo
-  muted:     "#8A6D5E",
-  accent:    "#B85A2D",   // terracotta CTA
-  border:    "#E0D5CC",
-  serif:     "'DM Serif Text', serif",
-  sans:      "'Figtree', sans-serif",
+  cream:      "#F5F0EC",
+  creamMid:   "#EDE5DC",
+  umber:      "#2E1208",   // deep chocolate — footer / dark sections
+  brown:      "#472B20",   // primary text / logo
+  muted:      "#8A6D5E",
+  accent:     "#B85A2D",   // terracotta CTA
+  border:     "#E0D5CC",
+  warmBorder: "#F0D8C8",   // used in header "New to Ramana?" button border
+  serif:      "'DM Serif Text', serif",
+  sans:       "'Figtree', sans-serif",
 };
 
 // Shared terracotta button style (rounded-rect, NOT pill — matches .in site)
@@ -208,7 +210,7 @@ function IntroScreen({ onDone }: { onDone: () => void }) {
 }
 
 // ─── 2. Header ────────────────────────────────────────────────────────────────
-function PublicHeader({ isAuthenticated }: { isAuthenticated: boolean }) {
+function PublicHeader({ isAuthenticated, onNewToRamana }: { isAuthenticated: boolean; onNewToRamana: () => void }) {
   const [menuOpen, setMenuOpen] = useState(false);
   const [scrolled, setScrolled] = useState(false);
 
@@ -278,6 +280,20 @@ function PublicHeader({ isAuthenticated }: { isAuthenticated: boolean }) {
           ))}
         </nav>
         <div className="flex items-center gap-4">
+          {/* "New to Ramana?" — softly styled trigger */}
+          {!isAuthenticated && (
+            <button
+              onClick={onNewToRamana}
+              style={{
+                fontFamily: T.sans, fontSize: "0.82rem", color: T.accent,
+                background: "none", border: `1px solid ${T.warmBorder}`,
+                borderRadius: 5, padding: "0.3rem 0.75rem", cursor: "pointer",
+                display: "flex", alignItems: "center", gap: "0.3rem",
+              }}
+            >
+              ✦ New to Ramana?
+            </button>
+          )}
           <Link to="/signin" style={{ color: T.brown, fontFamily: T.sans, fontSize: "0.85rem" }} className="hover:opacity-60 transition-opacity">
             Sign In
           </Link>
@@ -309,6 +325,14 @@ function PublicHeader({ isAuthenticated }: { isAuthenticated: boolean }) {
             ))}
           </div>
           <div style={{ borderTop: `1px solid ${T.border}`, paddingTop: "1rem" }} className="flex flex-col gap-3">
+            {!isAuthenticated && (
+              <button
+                onClick={() => { setMenuOpen(false); onNewToRamana(); }}
+                style={{ fontFamily: T.sans, color: T.accent, background: "none", border: `1px solid ${T.warmBorder}`, borderRadius: 5, padding: "0.5rem 0.75rem", cursor: "pointer", textAlign: "left" }}
+              >
+                ✦ New to Ramana? Start here
+              </button>
+            )}
             <Link to="/signin" style={{ color: T.brown, fontFamily: T.sans }} onClick={() => setMenuOpen(false)}>Sign In</Link>
             {isAuthenticated ? (
               <Link to="/home" style={{ ...btn, textAlign: "center" }} onClick={() => setMenuOpen(false)}>Go to Portal →</Link>
@@ -323,7 +347,7 @@ function PublicHeader({ isAuthenticated }: { isAuthenticated: boolean }) {
 }
 
 // ─── 3. Hero ─────────────────────────────────────────────────────────────────
-function HeroSection({ isAuthenticated }: { isAuthenticated: boolean }) {
+function HeroSection({ isAuthenticated, onNewToRamana }: { isAuthenticated: boolean; onNewToRamana: () => void }) {
   return (
     <section
       style={{
@@ -392,6 +416,22 @@ function HeroSection({ isAuthenticated }: { isAuthenticated: boolean }) {
         <p style={{ fontFamily: T.sans, color: "rgba(200,170,140,0.5)", fontSize: "0.78rem", marginTop: "1.5rem" }}>
           No credit card required · Free plan available · Answers from authenticated texts only
         </p>
+        {/* "New to Ramana?" ghost link — shown only to unauthenticated visitors */}
+        {!isAuthenticated && (
+          <button
+            onClick={onNewToRamana}
+            style={{
+              marginTop: "1.25rem",
+              background: "none", border: "none", cursor: "pointer",
+              fontFamily: T.sans, fontSize: "0.82rem",
+              color: "rgba(210,170,130,0.7)",
+              display: "inline-flex", alignItems: "center", gap: "0.35rem",
+              textDecoration: "underline", textDecorationColor: "rgba(210,170,130,0.3)",
+            }}
+          >
+            First time here? Start with a 2-minute introduction →
+          </button>
+        )}
       </div>
     </section>
   );
@@ -1404,7 +1444,7 @@ const INTRO_SESSION_KEY = "as_intro_seen_v2"; // bumped → forces re-show after
 export default function Landing() {
   const { isAuthenticated } = useAuth();
 
-  // Show intro once per browser session
+  // ── Atmospheric intro screen (once per session) ──────────────────────────
   const [showIntro, setShowIntro] = useState(() => {
     try {
       return !sessionStorage.getItem(INTRO_SESSION_KEY);
@@ -1418,12 +1458,33 @@ export default function Landing() {
     setShowIntro(false);
   };
 
+  // ── "New to Ramana?" onboarding modal (once per browser, localStorage) ───
+  const [showOnboarding, setShowOnboarding] = useState(false);
+
+  // Auto-show: fires 1.5 s after the intro screen finishes (or immediately
+  // if the intro was already seen), but only for unauthenticated visitors
+  // who haven't seen the onboarding before.
+  useEffect(() => {
+    if (isAuthenticated) return;
+    try { if (localStorage.getItem(SEEN_KEY)) return; } catch { return; }
+
+    // If IntroScreen is still showing, delay until it finishes + 1.5s
+    const delay = showIntro ? 3800 + 1500 : 1500;
+    const t = setTimeout(() => setShowOnboarding(true), delay);
+    return () => clearTimeout(t);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []); // run once on mount
+
+  const handleOnboardingClose = () => setShowOnboarding(false);
+  const openOnboarding = () => setShowOnboarding(true);
+
   return (
     <div style={{ backgroundColor: T.cream, scrollBehavior: "smooth" }} className="min-h-screen overflow-x-hidden">
       {showIntro && <IntroScreen onDone={handleIntroDone} />}
-      <PublicHeader isAuthenticated={isAuthenticated} />
+      {showOnboarding && <RamanaOnboardingModal onClose={handleOnboardingClose} />}
+      <PublicHeader isAuthenticated={isAuthenticated} onNewToRamana={openOnboarding} />
       <main>
-        <HeroSection isAuthenticated={isAuthenticated} />
+        <HeroSection isAuthenticated={isAuthenticated} onNewToRamana={openOnboarding} />
         <SelfEnquiryBanner isAuthenticated={isAuthenticated} />
         <DailyContemplationSection />
         <GuestChatSection />

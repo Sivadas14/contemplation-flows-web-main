@@ -33,6 +33,7 @@ from src.services import (
     usage as usage_svc,
 )
 from src.services import guest_content as guest_content_svc
+from src.services.ramana_images import get_portrait as ramana_portrait_handler
 from src.routers.notification_bar import router as notification_bar_router
 from src.routers.contemplation import router as contemplation_router
 from src.routers.newsletter import router as newsletter_router
@@ -287,6 +288,8 @@ def get_app() -> FastAPI:
     app.add_api_route("/api/content/images", content_svc.get_image_content, methods=["GET"], tags=["content"])
     app.add_api_route("/api/content/media", content_svc.get_media_content, methods=["GET"], tags=["content"])
     app.add_api_route("/api/content/conversation/{conversation_id}", content_svc.get_conversation_content, methods=["GET"], tags=["content"])
+    # public portrait for landing-page onboarding — no auth
+    app.add_api_route("/api/ramana-portrait", ramana_portrait_handler, methods=["GET"], tags=["guest"])
     # guest content — public, no auth — MUST be before {content_id} wildcard
     app.add_api_route("/api/content/guest", guest_content_svc.create_guest_content, methods=["POST"], tags=["guest"])
     app.add_api_route("/api/content/guest/{content_id}", guest_content_svc.get_guest_content, methods=["GET"], tags=["guest"])

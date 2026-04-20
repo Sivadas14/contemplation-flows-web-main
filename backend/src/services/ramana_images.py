@@ -4,6 +4,7 @@ Images uploaded here are used for contemplation cards in place of AI-generated i
 """
 
 import uuid
+import random
 from io import BytesIO
 
 from fastapi import APIRouter, Depends, HTTPException, UploadFile, File, Form
@@ -173,3 +174,28 @@ async def delete_ramana_image(
     await session.delete(img)
     await session.commit()
     return {"deleted": image_id}
+
+
+# ---------------------------------------------------------------------------
+# GET /api/ramana-portrait  — PUBLIC, no auth
+# Returns a 24-hour signed URL for one random active Ramana library image.
+# Used by the landing-page "New to Ramana?" onboarding modal.
+# ---------------------------------------------------------------------------
+async def get_portrait(session: AsyncSession = Depends(get_db_session_fa)):
+    result = await session.execute(
+        select(RamanaImage).where(RamanaImage.active == True)
+    )
+    images = result.scalars().all()
+    if not images:
+        raise HTTPException(status_code=404, detail="No portrait available.")
+
+    img = random.choice(images)
+    settings = get_settings()
+    spb = get_supabase_admin_client(settings)
+    try:
+        signed = spb.storage.from_(BUCKET).create_signed_url(img.storage_path, 86400)
+        url = signed.get("signedURL") or signed.get("signedUrl", "")
+    except Exception:
+        raise HTTPException(status_code=500, detail="Could not generate image URL.")
+
+    return {"url": url}

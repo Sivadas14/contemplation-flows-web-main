@@ -26,6 +26,7 @@ import {
   BookOpen, Sparkles, MessageCircle, Music,
   ChevronDown, ChevronUp, ArrowRight, CheckCircle2,
   Menu, X, Mail, Layers, Send, Lock,
+  Image as ImageIcon, Volume2, Video, Download,
 } from "lucide-react";
 
 // ─── Design tokens (matching arunachalasamudra.in) ────────────────────────────
@@ -569,13 +570,16 @@ function SacredLibrarySection() {
 // Note: Daily Contemplation and Sacred Library are already shown as full
 // sections above, so they are intentionally NOT listed here.
 // ─── Guest Chat ───────────────────────────────────────────────────────────────
-const GUEST_SESSION_ID_KEY  = "as_guest_sid";
-const GUEST_MSG_COUNT_KEY   = "as_guest_count";
-const GUEST_MESSAGES_KEY    = "as_guest_msgs";
-const GUEST_LIMIT           = 5;
-const API_BASE              = (import.meta.env.VITE_API_BASE_URL as string || "/api").replace(/\/$/, "");
+const GUEST_SESSION_ID_KEY   = "as_guest_sid";
+const GUEST_MSG_COUNT_KEY    = "as_guest_count";
+const GUEST_MESSAGES_KEY     = "as_guest_msgs";
+const GUEST_CONTENT_COUNT_KEY = "as_guest_content_count";
+const GUEST_LIMIT            = 5;
+const GUEST_CONTENT_LIMIT    = 3;
+const API_BASE               = (import.meta.env.VITE_API_BASE_URL as string || "/api").replace(/\/$/, "");
 
 type GMsg = { role: "user" | "assistant"; content: string };
+type GenStatus = "idle" | "pending" | "processing" | "complete" | "failed";
 
 function getGuestSessionId(): string {
   try {
@@ -602,6 +606,40 @@ function GuestChatSection() {
   const [showModal, setShowModal] = useState(false);
   const bottomRef = useRef<HTMLDivElement>(null);
   const msgLenRef = useRef(0);
+
+  // ── Content generation state ──────────────────────────────────────────────
+  const [genMode,      setGenMode]      = useState<"image"|"audio"|"video"|null>(null);
+  const [genStatus,    setGenStatus]    = useState<GenStatus>("idle");
+  const [genContentId, setGenContentId] = useState<string|null>(null);
+  const [genUrl,       setGenUrl]       = useState<string|null>(null);
+  const [genType,      setGenType]      = useState<string|null>(null);
+  const [genError,     setGenError]     = useState<string|null>(null);
+  const [contentCount, setContentCount] = useState<number>(() => {
+    try { return parseInt(sessionStorage.getItem(GUEST_CONTENT_COUNT_KEY) || "0", 10); }
+    catch { return 0; }
+  });
+
+  // Poll for content status
+  useEffect(() => {
+    if (!genContentId || genStatus === "complete" || genStatus === "failed") return;
+    const timer = setInterval(async () => {
+      try {
+        const res = await fetch(`${API_BASE}/content/guest/${genContentId}`);
+        if (!res.ok) return;
+        const data = await res.json();
+        setGenStatus(data.status);
+        if (data.status === "complete") {
+          setGenUrl(data.content_url);
+          setGenType(data.content_type);
+          clearInterval(timer);
+        } else if (data.status === "failed") {
+          setGenError(data.error || "Generation failed. Please try again.");
+          clearInterval(timer);
+        }
+      } catch {}
+    }, 2500);
+    return () => clearInterval(timer);
+  }, [genContentId, genStatus]);
 
   // Only auto-scroll when a new message pair is added (user sent a message),
   // NOT on every streaming token update. This prevents competing with the
@@ -699,7 +737,56 @@ function GuestChatSection() {
     }
   };
 
+  // ── Generate content from last Q&A ────────────────────────────────────────
+  const handleGenerate = async (mode: "image" | "audio" | "video") => {
+    // Find last user + assistant pair
+    let question = "", answer = "";
+    for (let i = messages.length - 1; i >= 0; i--) {
+      if (messages[i].role === "assistant" && messages[i].content && !answer) answer = messages[i].content;
+      if (messages[i].role === "user" && messages[i].content && !question) { question = messages[i].content; break; }
+    }
+    if (!question || !answer) return;
+
+    setGenMode(mode);
+    setGenStatus("pending");
+    setGenUrl(null);
+    setGenType(null);
+    setGenError(null);
+    setGenContentId(null);
+
+    try {
+      const res = await fetch(`${API_BASE}/content/guest`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ question, answer, mode, session_id: getGuestSessionId() }),
+      });
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({}));
+        if (res.status === 429) {
+          setGenError("You've reached the free generation limit for today. Sign up for more.");
+        } else {
+          setGenError(err.detail || "Generation failed.");
+        }
+        setGenStatus("failed");
+        return;
+      }
+      const data = await res.json();
+      setGenContentId(data.content_id);
+      setGenStatus("processing");
+      const newCount = contentCount + 1;
+      setContentCount(newCount);
+      try { sessionStorage.setItem(GUEST_CONTENT_COUNT_KEY, String(newCount)); } catch {}
+    } catch {
+      setGenError("Network error. Please try again.");
+      setGenStatus("failed");
+    }
+  };
+
   const remaining = Math.max(0, GUEST_LIMIT - count);
+  const hasQA = messages.length >= 2 && messages.some(m => m.role === "user") && messages.some(m => m.role === "assistant" && m.content.length > 10);
+  const isGenerating = genStatus === "pending" || genStatus === "processing";
+  const genDone = genStatus === "complete";
+  const canGenerate = contentCount < GUEST_CONTENT_LIMIT && !isGenerating && !genDone;
 
   return (
     <section id="try" style={{ backgroundColor: T.umber, position: "relative", overflow: "hidden" }} className="py-20 px-6">
@@ -829,6 +916,164 @@ function GuestChatSection() {
             )}
           </div>
         </div>
+
+        {/* ── Content generation panel — appears after first Q&A ───────────── */}
+        {hasQA && (
+          <div style={{ marginTop: "2rem" }}>
+            {/* Divider with label */}
+            <div style={{ display: "flex", alignItems: "center", gap: "1rem", marginBottom: "1.25rem" }}>
+              <div style={{ flex: 1, height: "1px", backgroundColor: "rgba(255,255,255,0.1)" }} />
+              <p style={{ fontFamily: T.sans, color: "rgba(196,168,146,0.7)", fontSize: "0.72rem", letterSpacing: "0.14em", textTransform: "uppercase", fontWeight: 600, whiteSpace: "nowrap" }}>
+                Now experience the full practice
+              </p>
+              <div style={{ flex: 1, height: "1px", backgroundColor: "rgba(255,255,255,0.1)" }} />
+            </div>
+
+            {/* Three buttons */}
+            {!isGenerating && !genDone && (
+              <div style={{ display: "flex", gap: "0.75rem", justifyContent: "center", flexWrap: "wrap", marginBottom: "0.75rem" }}>
+                {([
+                  { mode: "image" as const,  icon: <ImageIcon className="w-4 h-4" />,  label: "Card",  sub: "Contemplation image" },
+                  { mode: "audio" as const,  icon: <Volume2   className="w-4 h-4" />,  label: "Audio", sub: "3-min guided meditation" },
+                  { mode: "video" as const,  icon: <Video     className="w-4 h-4" />,  label: "Video", sub: "3-min meditation video"  },
+                ]).map(({ mode, icon, label, sub }) => (
+                  <button
+                    key={mode}
+                    onClick={() => handleGenerate(mode)}
+                    disabled={!canGenerate}
+                    style={{
+                      display: "flex", flexDirection: "column", alignItems: "center", gap: "0.3rem",
+                      padding: "0.85rem 1.5rem",
+                      backgroundColor: canGenerate ? "rgba(255,255,255,0.07)" : "rgba(255,255,255,0.03)",
+                      border: "1px solid rgba(255,255,255,0.14)",
+                      borderRadius: "6px",
+                      cursor: canGenerate ? "pointer" : "not-allowed",
+                      minWidth: "120px",
+                      transition: "background-color 0.2s",
+                      opacity: canGenerate ? 1 : 0.45,
+                    }}
+                    onMouseEnter={e => { if (canGenerate) (e.currentTarget as HTMLButtonElement).style.backgroundColor = "rgba(255,255,255,0.12)"; }}
+                    onMouseLeave={e => { (e.currentTarget as HTMLButtonElement).style.backgroundColor = canGenerate ? "rgba(255,255,255,0.07)" : "rgba(255,255,255,0.03)"; }}
+                  >
+                    <span style={{ color: T.accent }}>{icon}</span>
+                    <span style={{ fontFamily: T.sans, color: "#F5F0EC", fontSize: "0.88rem", fontWeight: 600 }}>{label}</span>
+                    <span style={{ fontFamily: T.sans, color: "#9A8070", fontSize: "0.72rem" }}>{sub}</span>
+                  </button>
+                ))}
+              </div>
+            )}
+
+            {/* Quota note */}
+            {!isGenerating && !genDone && (
+              <p style={{ fontFamily: T.sans, color: "rgba(154,128,112,0.7)", fontSize: "0.75rem", textAlign: "center" }}>
+                {contentCount < GUEST_CONTENT_LIMIT
+                  ? `${GUEST_CONTENT_LIMIT - contentCount} free generation${GUEST_CONTENT_LIMIT - contentCount !== 1 ? "s" : ""} remaining today — generate from your question above`
+                  : "You've used all free generations today. Sign up for unlimited access."}
+              </p>
+            )}
+
+            {/* Loading spinner — exact same style as live product */}
+            {isGenerating && (
+              <div style={{ display: "flex", flexDirection: "column", alignItems: "center", padding: "2rem 0" }}>
+                <div style={{ position: "relative", width: "4rem", height: "4rem", marginBottom: "1rem" }}>
+                  <div style={{ position: "absolute", inset: 0, border: "4px solid rgba(184,90,45,0.25)", borderTopColor: T.accent, borderRadius: "50%", animation: "spin 1s linear infinite" }} />
+                  <div style={{ position: "absolute", inset: "8px", background: `radial-gradient(circle, ${T.accent}, #8b3a1a)`, borderRadius: "50%", animation: "pulse2 1.5s ease-in-out infinite" }} />
+                  <style>{`@keyframes spin{to{transform:rotate(360deg)}} @keyframes pulse2{0%,100%{opacity:.6}50%{opacity:1}}`}</style>
+                </div>
+                <p style={{ fontFamily: T.sans, color: T.accent, fontSize: "0.95rem", fontWeight: 600 }}>
+                  {genMode === "image" ? "Creating your contemplation card…" : genMode === "audio" ? "Generating your guided meditation audio…" : "Generating your meditation video…"}
+                </p>
+                <p style={{ fontFamily: T.sans, color: "#9A8070", fontSize: "0.8rem", marginTop: "0.35rem" }}>
+                  {genMode === "video" ? "Video takes ~2 minutes — please keep this tab open" : "This may take a moment — please keep this tab open"}
+                </p>
+              </div>
+            )}
+
+            {/* Error */}
+            {genStatus === "failed" && genError && (
+              <div style={{ backgroundColor: "rgba(200,60,60,0.12)", border: "1px solid rgba(200,60,60,0.25)", borderRadius: "6px", padding: "1rem", textAlign: "center", marginBottom: "0.75rem" }}>
+                <p style={{ fontFamily: T.sans, color: "#e88888", fontSize: "0.88rem" }}>{genError}</p>
+                <button onClick={() => setGenStatus("idle")} style={{ ...btn, marginTop: "0.75rem", fontSize: "0.8rem", padding: "0.45rem 1rem" }}>Try again</button>
+              </div>
+            )}
+
+            {/* ── Result display ─────────────────────────────────────────── */}
+            {genDone && genUrl && genType === "image" && (
+              <div style={{ textAlign: "center" }}>
+                <p style={{ fontFamily: T.sans, color: T.accent, fontSize: "0.72rem", letterSpacing: "0.12em", textTransform: "uppercase", fontWeight: 600, marginBottom: "0.75rem" }}>
+                  Your contemplation card
+                </p>
+                <div style={{ position: "relative", display: "inline-block", maxWidth: "380px", width: "100%" }}>
+                  <img src={genUrl} alt="Contemplation card" style={{ width: "100%", borderRadius: "8px", boxShadow: "0 20px 60px rgba(0,0,0,0.5)" }} />
+                  <a
+                    href={genUrl} download="contemplation-card.png" target="_blank" rel="noopener noreferrer"
+                    style={{ position: "absolute", top: "0.75rem", right: "0.75rem", backgroundColor: "rgba(0,0,0,0.55)", color: "#fff", borderRadius: "50%", width: "2rem", height: "2rem", display: "flex", alignItems: "center", justifyContent: "center", textDecoration: "none" }}
+                    title="Download"
+                  >
+                    <Download className="w-4 h-4" />
+                  </a>
+                </div>
+                <p style={{ fontFamily: T.sans, color: "#9A8070", fontSize: "0.78rem", marginTop: "0.75rem" }}>
+                  Subscribers get a new card for every question they ask.
+                </p>
+                <button onClick={() => { setGenStatus("idle"); setGenMode(null); setGenUrl(null); }} style={{ ...btn, marginTop: "1rem", fontSize: "0.8rem", padding: "0.45rem 1rem", backgroundColor: "transparent", border: `1px solid ${T.accent}`, color: T.accent }}>
+                  Generate another
+                </button>
+              </div>
+            )}
+
+            {genDone && genUrl && genType === "audio" && (
+              <div>
+                <p style={{ fontFamily: T.sans, color: T.accent, fontSize: "0.72rem", letterSpacing: "0.12em", textTransform: "uppercase", fontWeight: 600, marginBottom: "0.75rem", textAlign: "center" }}>
+                  Your 3-min guided meditation
+                </p>
+                <div style={{ backgroundColor: "rgba(255,255,255,0.06)", borderRadius: "8px", padding: "1.25rem 1.5rem" }}>
+                  <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: "0.75rem" }}>
+                    <div style={{ display: "flex", alignItems: "center", gap: "0.5rem" }}>
+                      <Music className="w-4 h-4" style={{ color: T.accent }} />
+                      <span style={{ fontFamily: T.sans, color: "#F5F0EC", fontSize: "0.88rem", fontWeight: 500 }}>Guided Meditation Audio</span>
+                    </div>
+                    <a href={genUrl} download="meditation-audio.mp3" target="_blank" rel="noopener noreferrer" title="Download" style={{ color: "#9A8070" }}>
+                      <Download className="w-4 h-4" />
+                    </a>
+                  </div>
+                  <audio key={genUrl} src={genUrl} controls preload="auto" style={{ width: "100%" }}>
+                    Your browser does not support audio playback.
+                  </audio>
+                </div>
+                <p style={{ fontFamily: T.sans, color: "#9A8070", fontSize: "0.78rem", marginTop: "0.75rem", textAlign: "center" }}>
+                  Subscribers get personalised meditations for every question they ask.
+                </p>
+                <div style={{ textAlign: "center" }}>
+                  <button onClick={() => { setGenStatus("idle"); setGenMode(null); setGenUrl(null); }} style={{ ...btn, marginTop: "0.75rem", fontSize: "0.8rem", padding: "0.45rem 1rem", backgroundColor: "transparent", border: `1px solid ${T.accent}`, color: T.accent }}>
+                    Generate another
+                  </button>
+                </div>
+              </div>
+            )}
+
+            {genDone && genUrl && genType === "video" && (
+              <div>
+                <p style={{ fontFamily: T.sans, color: T.accent, fontSize: "0.72rem", letterSpacing: "0.12em", textTransform: "uppercase", fontWeight: 600, marginBottom: "0.75rem", textAlign: "center" }}>
+                  Your 3-min meditation video
+                </p>
+                <div style={{ borderRadius: "8px", overflow: "hidden", boxShadow: "0 20px 60px rgba(0,0,0,0.5)" }}>
+                  <video key={genUrl} src={genUrl} controls preload="metadata" style={{ width: "100%", display: "block" }}>
+                    Your browser does not support video playback.
+                  </video>
+                </div>
+                <p style={{ fontFamily: T.sans, color: "#9A8070", fontSize: "0.78rem", marginTop: "0.75rem", textAlign: "center" }}>
+                  Subscribers get personalised meditation videos for every question they ask.
+                </p>
+                <div style={{ textAlign: "center" }}>
+                  <button onClick={() => { setGenStatus("idle"); setGenMode(null); setGenUrl(null); }} style={{ ...btn, marginTop: "0.75rem", fontSize: "0.8rem", padding: "0.45rem 1rem", backgroundColor: "transparent", border: `1px solid ${T.accent}`, color: T.accent }}>
+                    Generate another
+                  </button>
+                </div>
+              </div>
+            )}
+          </div>
+        )}
       </div>
     </section>
   );

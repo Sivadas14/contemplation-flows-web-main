@@ -55,10 +55,11 @@ const Chat = () => {
   const { userProfile } = useAuth();
 
   // Plan state — used to drive the post-login welcome / paywall screens.
-  // Guard: if usage hasn't loaded yet, treat as "still loading" — don't
-  // derive isFree/paidExhausted from null, which would briefly render the
-  // wrong screen before the API responds.
-  const isFree = usage?.plan_type === 'FREE';
+  // While usage is loading, treat as FREE so the correct welcome screen
+  // renders immediately with no blank delay. FREE users see the right screen
+  // from the first paint. Paid users see the FREE welcome for ~300–500ms then
+  // the paid home — a barely-perceptible and acceptable transition.
+  const isFree = usageLoading ? true : (usage?.plan_type === 'FREE');
   const paidExhausted = !isFree && typeof usage?.conversations?.remaining === 'number' && usage.conversations.remaining <= 0;
   const [messages, setMessages] = useState<Message[]>([]);
   const [currentInput, setCurrentInput] = useState("");
@@ -1084,13 +1085,7 @@ const Chat = () => {
       {/* Messages Container */}
       <div className="flex-1 p-4 md:p-6 max-w-[816px] mx-auto w-full">
 
-        {/* While usage is still loading, show a blank cream screen so the
-            wrong welcome state never flashes before the API responds. */}
-        {!isLoadingConversation && messages.length === 0 && usageLoading && (
-          <div style={{ flex: 1, backgroundColor: "#F5F0EC" }} />
-        )}
-
-        {!isLoadingConversation && messages.length === 0 && !usageLoading && (() => {
+        {!isLoadingConversation && messages.length === 0 && (() => {
           // ── Shared header used by all three empty-state screens ────────────
           const PageHeader = () => (
             <div style={{ display: "flex", flexDirection: "column", alignItems: "center", width: "100%" }}>

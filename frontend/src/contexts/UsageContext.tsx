@@ -111,11 +111,6 @@ export const UsageProvider: React.FC<{ children: ReactNode }> = ({ children }) =
 
     useEffect(() => {
         if (user) {
-            // Reset to loading state BEFORE fetching so Chat.tsx's blank-cream
-            // guard fires immediately — prevents the wrong welcome screen from
-            // flashing while the usage API is in-flight.
-            setLoading(true);
-            setUsage(null);
             console.log('🔵 [UsageContext] User ready, fetching usage and subscription...');
             fetchUsage();
             fetchSubscription();

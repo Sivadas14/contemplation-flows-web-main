@@ -578,6 +578,7 @@ async def jwt_auth_middleware(request: Request, call_next):
         "/health",
         "/api/admin/make-admin",  # Bootstrap endpoint — secured by admin_secret, not JWT
         "/api/chat/guest",        # Public guest chat — rate-limited by IP in the endpoint itself
+        "/api/content/guest",     # Public guest content (card/audio/video) — rate-limited by session_id
     ]
 
     if any(request.url.path.startswith(path) for path in public_paths):

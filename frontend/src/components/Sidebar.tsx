@@ -119,7 +119,7 @@ const Sidebar = () => {
     return (
         <div className="flex bg-[#F5F0EC] flex-col h-full w-[260px] border-r border-[#ECE5DF]">
             <div className="px-4 pt-2 pb-2">
-                <div onClick={() => navigate("/home")} className="cursor-pointer">
+                <a href="http://www.arunachalasamudra.in" target="_blank" rel="noopener noreferrer" className="cursor-pointer">
                     {/* <img
                         src="/images/LogoPrimary/Logo-Primary.svg"
                         alt="ArunachalaSamudra"
@@ -147,7 +147,7 @@ const Sidebar = () => {
                         </svg>
                     </div>
 
-                </div>
+                </a>
 
             </div>
 

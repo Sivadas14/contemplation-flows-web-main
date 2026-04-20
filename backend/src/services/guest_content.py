@@ -60,6 +60,17 @@ _JUNK_PATTERNS = [
     re.compile(r":\s*$"),                     # ends with colon (intro sentence)
     re.compile(r"\d+[\.\)]\s+\w"),            # inline numbered list mid-sentence
     re.compile(r"^[-•*]\s"),                  # bullet point
+    # Encyclopedia / hollow descriptor sentences:
+    # "Silence, in the teachings of X, is a profound concept."
+    # "Silence is a profound and significant concept."
+    # "X refers to / is defined as / is known as ..."
+    re.compile(r"\bin the teachings of\b", re.IGNORECASE),
+    re.compile(r"\baccording to ramana\b", re.IGNORECASE),
+    re.compile(r"is a (profound|significant|central|core|key|fundamental|important|crucial)\b.*\b(concept|idea|principle|notion|teaching|practice|term|aspect)\b", re.IGNORECASE),
+    re.compile(r"\b(refers to|is defined as|is known as|is described as|can be defined as|can be described as)\b", re.IGNORECASE),
+    re.compile(r"\bplays (a|an) (important|key|central|significant|crucial) role\b", re.IGNORECASE),
+    re.compile(r"\bin (his|the) (teaching|teachings|philosophy|tradition|framework|context|view)\b", re.IGNORECASE),
+    re.compile(r"\baccording to (him|ramana|maharshi|this teaching)\b", re.IGNORECASE),
 ]
 
 from fastapi import HTTPException
@@ -152,21 +163,37 @@ def _is_junk(sentence: str) -> bool:
     return False
 
 
-def _short_quote(answer: str, max_chars: int = 160) -> str:
-    """Extract a clean, quotable sentence from the AI answer.
+def _short_quote(answer: str, max_chars: int = 200) -> str:
+    """Extract a clean, quotable 1–2 sentence caption from the AI answer.
 
-    Strategy (in order):
-      1. Split into sentences and find the first one that:
-           • is 40–max_chars characters long
-           • passes the junk filter (no AI preamble, no numbered lists, etc.)
-      2. If nothing passes, fall back to a verified authentic Ramana quote.
+    Strategy:
+      1. Split the answer into sentences.
+      2. Walk the list and collect the first clean sentence (40–max_chars,
+         passes junk filter).
+      3. If that sentence is short (< 90 chars) and the *next* sentence is
+         also clean, append it — so the card caption feels complete.
+         Combined length must stay within max_chars.
+      4. If no clean sentence is found at all, fall back to a verified
+         authentic Ramana quote.
     """
-    sentences = re.split(r'(?<=[.!?])\s+', answer.strip())
-    for s in sentences:
-        clean = s.strip().strip('"').strip("'").strip()
-        if 40 <= len(clean) <= max_chars and not _is_junk(clean):
-            return clean
-    # Nothing clean found — use a verified Ramana quote as the card caption
+    sentences = [s.strip().strip('"').strip("'").strip()
+                 for s in re.split(r'(?<=[.!?])\s+', answer.strip())]
+    sentences = [s for s in sentences if s]
+
+    for i, s in enumerate(sentences):
+        if len(s) < 40 or len(s) > max_chars or _is_junk(s):
+            continue
+        # Found a good primary sentence.
+        # If it's short, try to grab the next clean sentence too.
+        if len(s) < 90 and i + 1 < len(sentences):
+            nxt = sentences[i + 1]
+            if not _is_junk(nxt) and len(nxt) >= 20:
+                combined = f"{s} {nxt}"
+                if len(combined) <= max_chars:
+                    return combined
+        return s
+
+    # Nothing clean found — use a verified Ramana quote as the card caption.
     return random.choice(_RAMANA_FALLBACK_QUOTES)
 
 

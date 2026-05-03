@@ -68,6 +68,21 @@ async def call_sarvam(text: str, target: str, source: str = "en", timeout: float
 # Azure Translator
 # ---------------------------------------------------------------------------
 
+# Azure Translator v3 uses BCP-47-style codes that differ from the codes we
+# expose to the frontend. Map our system codes to what Azure expects.
+# Codes not in this map pass through unchanged (most ISO 639-1 codes work as-is).
+_AZURE_LANG_MAP = {
+    "no":    "nb",      # Norwegian — Azure only supports Bokmål specifically
+    "zh-CN": "zh-Hans", # Simplified Chinese
+    "zh-TW": "zh-Hant", # Traditional Chinese (future)
+}
+
+
+def _azure_lang(code: str) -> str:
+    """Normalise our system language code to what Azure Translator expects."""
+    return _AZURE_LANG_MAP.get(code, code)
+
+
 async def call_azure(text: str, target: str, source: str = "en", timeout: float = 10.0) -> str:
     """Translate via Microsoft Azure Cognitive Translator (v3 API).
 
@@ -79,7 +94,7 @@ async def call_azure(text: str, target: str, source: str = "en", timeout: float 
         "Ocp-Apim-Subscription-Region": settings.azure_translator_region,
         "Content-Type":                 "application/json",
     }
-    params = {"api-version": "3.0", "from": source, "to": target}
+    params = {"api-version": "3.0", "from": _azure_lang(source), "to": _azure_lang(target)}
     async with httpx.AsyncClient(timeout=timeout) as client:
         r = await client.post(
             "https://api.cognitive.microsofttranslator.com/translate",

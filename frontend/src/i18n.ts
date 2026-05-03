@@ -13,15 +13,27 @@ import LanguageDetector from "i18next-browser-languagedetector";
 import { initReactI18next } from "react-i18next";
 
 export const SUPPORTED_LANGUAGES = [
-  { code: "en", native: "English",   english: "English",   rtl: false },
-  { code: "hi", native: "हिन्दी",     english: "Hindi",     rtl: false },
-  { code: "ta", native: "தமிழ்",     english: "Tamil",     rtl: false },
-  { code: "te", native: "తెలుగు",    english: "Telugu",    rtl: false },
-  { code: "bn", native: "বাংলা",      english: "Bengali",   rtl: false },
-  { code: "ml", native: "മലയാളം",   english: "Malayalam", rtl: false },
-  { code: "es", native: "Español",  english: "Spanish",   rtl: false },
-  { code: "fr", native: "Français", english: "French",    rtl: false },
-  { code: "ar", native: "العربية",    english: "Arabic",    rtl: true  },
+  { code: "en",    native: "English",    english: "English",     rtl: false },
+  // Indian
+  { code: "hi",    native: "हिन्दी",       english: "Hindi",       rtl: false },
+  { code: "ta",    native: "தமிழ்",       english: "Tamil",       rtl: false },
+  { code: "te",    native: "తెలుగు",      english: "Telugu",      rtl: false },
+  { code: "bn",    native: "বাংলা",        english: "Bengali",     rtl: false },
+  { code: "ml",    native: "മലയാളം",     english: "Malayalam",   rtl: false },
+  // Western Europe
+  { code: "es",    native: "Español",    english: "Spanish",     rtl: false },
+  { code: "fr",    native: "Français",   english: "French",      rtl: false },
+  { code: "de",    native: "Deutsch",    english: "German",      rtl: false },
+  { code: "nl",    native: "Nederlands", english: "Dutch",       rtl: false },
+  // Scandinavian + Finnish
+  { code: "sv",    native: "Svenska",    english: "Swedish",     rtl: false },
+  { code: "da",    native: "Dansk",      english: "Danish",      rtl: false },
+  { code: "no",    native: "Norsk",      english: "Norwegian",   rtl: false },
+  { code: "fi",    native: "Suomi",      english: "Finnish",     rtl: false },
+  // Middle East
+  { code: "ar",    native: "العربية",      english: "Arabic",      rtl: true  },
+  // East Asia
+  { code: "zh-CN", native: "中文",        english: "Chinese (Simplified)", rtl: false },
 ] as const;
 
 export type LanguageCode = (typeof SUPPORTED_LANGUAGES)[number]["code"];

@@ -1506,52 +1506,30 @@ async def _guest_chat_stream(
         )
     )
 
-    # Stream LLM response
+    # Call LLM and stream response word-by-word
+    # Uses chat_async (not chat_stream) — same approach as the working main app.
     response_content = ""
     try:
-        if is_non_english:
-            # === PHASE 1B (guest): collect full English response, translate, yield translated ===
-            if hasattr(model, "chat_stream"):
-                async for chunk in model.chat_stream(master_thread):
-                    content = chunk.content if hasattr(chunk, "content") else str(chunk)
-                    response_content += content
-                    # NOTE: do NOT yield English tokens; we need full text to translate
-            else:
-                response = await model.chat_async(master_thread)
-                response_content = response.content if hasattr(response, "content") else str(response)
+        response = await model.chat_async(master_thread)
+        response_content = response.content if hasattr(response, "content") else str(response)
 
-            # Translate the full English response into user_lang
+        if is_non_english:
+            # === PHASE 1B (guest): translate full English response then stream translated words ===
             try:
-                translated_content = await translate_assistant_response(
+                response_content = await translate_assistant_response(
                     session, response_content, user_lang
                 )
             except Exception as e:
                 tu.logger.warning(
                     f"[GUEST_CHAT_LANG] Output translation failed; serving English: {e}"
                 )
-                translated_content = response_content
+            # === END PHASE 1B ===
 
-            # Yield translated text as synthetic word-chunks for streaming feel
-            words = translated_content.split()
-            for i, word in enumerate(words):
-                yield ta.to_openai_chunk(tt.assistant(word if i == 0 else " " + word))
-                await asyncio.sleep(0.025)
-            # === END PHASE 1B addition ===
-
-        else:
-            # === ENGLISH PATH — unchanged from pre-Phase-1B behavior ===
-            if hasattr(model, "chat_stream"):
-                async for chunk in model.chat_stream(master_thread):
-                    content = chunk.content if hasattr(chunk, "content") else str(chunk)
-                    response_content += content
-                    yield ta.to_openai_chunk(tt.assistant(content))
-            else:
-                response = await model.chat_async(master_thread)
-                response_content = response.content if hasattr(response, "content") else str(response)
-                words = response_content.split()
-                for i, word in enumerate(words):
-                    yield ta.to_openai_chunk(tt.assistant(word if i == 0 else " " + word))
-                    await asyncio.sleep(0.025)
+        # Stream as individual words for smooth frontend display
+        words = response_content.split()
+        for i, word in enumerate(words):
+            yield ta.to_openai_chunk(tt.assistant(word if i == 0 else " " + word))
+            await asyncio.sleep(0.025)
     except Exception as e:
         tu.logger.error(f"Guest chat LLM error: {e}")
         # Translate the error message too if non-English

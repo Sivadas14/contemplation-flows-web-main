@@ -66,13 +66,20 @@ const MainLayout = ({ children }: MainLayoutProps) => {
 
         const sync = async () => {
             const m = document.cookie.match(/googtrans=\/[^/]+\/([a-zA-Z-]+)/);
-            if (!m || !m[1]) return;
 
-            const raw = m[1].toLowerCase();
-            const code: string =
-                raw === "zh-cn" ? "zh-CN" :
-                raw === "zh-tw" ? "zh-TW" :
-                raw;
+            let code: string;
+            if (m && m[1]) {
+                const raw = m[1].toLowerCase();
+                code = raw === "zh-cn" ? "zh-CN" :
+                       raw === "zh-tw" ? "zh-TW" :
+                       raw;
+            } else {
+                // googtrans cookie missing → GTranslate is back to source (English).
+                // Without this branch, pref_lang stays stuck at the previous
+                // language and the chat keeps replying in it even though the
+                // page is now back in English.
+                code = "en";
+            }
 
             if (!(SUPPORTED_LNG_CODES as readonly string[]).includes(code)) return;
 

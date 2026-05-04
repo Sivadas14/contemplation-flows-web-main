@@ -1741,19 +1741,28 @@ export default function Landing() {
   // language on Landing. Without this sync, the user's Landing-page choice
   // doesn't carry into the post-login react-i18next world (which reads
   // `pref_lang`). Poll once per second while Landing is mounted; mirror to
-  // pref_lang + localStorage + live i18next state. The live changeLanguage
-  // call ensures the running React tree updates immediately rather than
-  // waiting for a page reload.
+  // pref_lang + localStorage + live i18next state.
+  //
+  // Important: when GTranslate is reset (user picks "English" or clicks
+  // "Show original"), the googtrans cookie is REMOVED entirely. Without
+  // explicit handling, pref_lang would be stuck at the previously-selected
+  // language and the chat would keep responding in that language even
+  // though the visible page is back to English. So a missing googtrans is
+  // treated as "page is in source language" → English.
   useEffect(() => {
     const sync = () => {
       const m = document.cookie.match(/googtrans=\/[^/]+\/([a-zA-Z-]+)/);
-      if (!m || !m[1]) return;
 
-      const raw = m[1].toLowerCase();
-      const code: string =
-        raw === "zh-cn" ? "zh-CN" :
-        raw === "zh-tw" ? "zh-TW" :
-        raw;
+      let code: string;
+      if (m && m[1]) {
+        const raw = m[1].toLowerCase();
+        code = raw === "zh-cn" ? "zh-CN" :
+               raw === "zh-tw" ? "zh-TW" :
+               raw;
+      } else {
+        // No googtrans cookie → GTranslate is showing the original (English).
+        code = "en";
+      }
 
       if (!(SUPPORTED_LNG_CODES as readonly string[]).includes(code)) return;
 

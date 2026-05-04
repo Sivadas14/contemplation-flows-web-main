@@ -3,6 +3,7 @@ from tuneapi import tt, ta, tu
 import uuid
 import time
 import asyncio
+import hashlib
 from asyncio import sleep
 from textwrap import dedent
 from typing import List
@@ -968,42 +969,159 @@ async def _detect_and_suggest_topic(user_message: str) -> None:
         tu.logger.warning(f"[TOPIC_SUGGEST] Background task error (non-fatal): {e}")
 
 
+# ---------------------------------------------------------------------------
+# Embedding cache — avoids re-calling OpenAI for the same text within a
+# process lifetime. Keyed by SHA-256 of the lowercased query. Max 512 entries
+# (LRU eviction via simple ordered dict). Thread-safe enough for asyncio.
+# ---------------------------------------------------------------------------
+_EMBED_CACHE: dict[str, list[float]] = {}
+_EMBED_CACHE_MAX = 512
+
+
+def _embed_cache_key(text: str) -> str:
+    return hashlib.sha256(text.lower().strip().encode()).hexdigest()
+
+
+async def _get_embedding_with_retry(model: tt.ModelInterface, text: str) -> list[float]:
+    """Fetch embedding with in-memory cache + exponential-backoff retry on 429."""
+    key = _embed_cache_key(text)
+    if key in _EMBED_CACHE:
+        tu.logger.info("[EMBED_CACHE] Cache hit")
+        return _EMBED_CACHE[key]
+
+    last_exc: Exception | None = None
+    delays = [1, 3, 7]  # seconds between retries
+    for attempt, delay in enumerate(delays, start=1):
+        try:
+            resp = await model.embedding_async(text, model="text-embedding-3-small")
+            embedding = resp.embedding[0]
+            # Store in cache (evict oldest if full)
+            if len(_EMBED_CACHE) >= _EMBED_CACHE_MAX:
+                oldest_key = next(iter(_EMBED_CACHE))
+                del _EMBED_CACHE[oldest_key]
+            _EMBED_CACHE[key] = embedding
+            return embedding
+        except Exception as e:
+            last_exc = e
+            err_str = str(e)
+            if "429" in err_str or "Too Many Requests" in err_str:
+                tu.logger.warning(
+                    f"[EMBED_RETRY] OpenAI 429 on attempt {attempt}; "
+                    f"retrying in {delay}s…"
+                )
+                await asyncio.sleep(delay)
+            else:
+                # Non-rate-limit error — don't retry
+                raise
+
+    raise last_exc  # type: ignore[misc]
+
+
+async def _fulltext_search_fallback(
+    session: AsyncSession,
+    query: str,
+    limit: int = 10,
+) -> list[tuple[str, str]]:
+    """PostgreSQL full-text search fallback when embedding API is unavailable.
+
+    Uses plainto_tsquery which is safe with arbitrary user input (no
+    need to escape special characters). Falls back to a LIKE search if
+    the query produces no ts_rank results (e.g. single-character query).
+    Requires no external API calls.
+    """
+    from sqlalchemy import text as sql_text
+
+    # Build a sanitised list of significant keywords (>= 3 chars)
+    stop_words = {"the", "and", "for", "not", "but", "are", "was", "you",
+                  "that", "this", "with", "have", "from", "they", "will"}
+    keywords = [
+        w.strip("?.,!;:")
+        for w in query.lower().split()
+        if len(w.strip("?.,!;:")) >= 3 and w.strip("?.,!;:") not in stop_words
+    ]
+    tsquery_str = " & ".join(keywords) if keywords else query.split()[0]
+
+    try:
+        result = await session.execute(
+            sql_text(
+                """
+                SELECT dc.content, sd.filename
+                FROM document_chunks dc
+                JOIN source_documents sd ON dc.source_document_id = sd.id
+                WHERE sd.active = true
+                  AND to_tsvector('english', dc.content) @@ plainto_tsquery('english', :q)
+                ORDER BY ts_rank(to_tsvector('english', dc.content), plainto_tsquery('english', :q)) DESC
+                LIMIT :lim
+                """
+            ),
+            {"q": query, "lim": limit},
+        )
+        rows = result.all()
+        if rows:
+            tu.logger.info(f"[FTS_FALLBACK] Found {len(rows)} chunks via full-text search")
+            return rows
+    except Exception as e:
+        tu.logger.warning(f"[FTS_FALLBACK] ts_rank search failed: {e}")
+
+    # Last resort: simple keyword LIKE search
+    try:
+        first_kw = keywords[0] if keywords else query[:20]
+        result = await session.execute(
+            sql_text(
+                """
+                SELECT dc.content, sd.filename
+                FROM document_chunks dc
+                JOIN source_documents sd ON dc.source_document_id = sd.id
+                WHERE sd.active = true
+                  AND dc.content ILIKE :pattern
+                LIMIT :lim
+                """
+            ),
+            {"pattern": f"%{first_kw}%", "lim": limit},
+        )
+        rows = result.all()
+        tu.logger.info(f"[FTS_FALLBACK] LIKE fallback found {len(rows)} chunks")
+        return rows
+    except Exception as e:
+        tu.logger.warning(f"[FTS_FALLBACK] LIKE search also failed: {e}")
+        return []
+
+
 async def _embedding_search_optimized(
     session: AsyncSession,
     model: tt.ModelInterface,
     query: str,
 ) -> list[tuple[str, str]]:
-    """Optimized embedding search - PROFILED"""
-    
-    async with profile_operation("embedding_generation") as op:
-        embedding_response = await model.embedding_async(
-            query, model="text-embedding-3-small"
-        )
-        embedding = embedding_response.embedding[0]
-        op.finish(embedding_dimensions=len(embedding))
-    
-    async with profile_operation("vector_search") as op:
-        # SIMILARITY THRESHOLD: max_inner_product returns negative inner product.
-        # For normalised OpenAI embeddings, cosine similarity = inner product.
-        # Filtering <= -0.35 means only chunks with cosine similarity >= 0.35 pass through.
-        # 0.35 is calibrated for text-embedding-3-small: short queries like "Who am I?"
-        # produce lower scores than long passages even when perfectly relevant, so 0.50
-        # was too aggressive. Off-topic content (sports, food, news) scores < 0.20 and
-        # is still filtered out. Ramana-topic queries consistently score 0.35-0.70.
-        SIMILARITY_THRESHOLD = 0.35
-        query = (
-            select(db.DocumentChunk.content, db.SourceDocument.filename)
-            .join(db.SourceDocument)
-            .where(db.SourceDocument.active == True)
-            .where(db.DocumentChunk.embedding.max_inner_product(embedding) <= -SIMILARITY_THRESHOLD)
-            .order_by(db.DocumentChunk.embedding.max_inner_product(embedding))
-            .limit(10)
-        )
-        result = await session.execute(query)
-        chunks: list[tuple[str, str]] = result.all()
-        op.finish(chunks_found=len(chunks))
-    
-    return chunks
+    """Vector similarity search; falls back to full-text search on embedding failure."""
+
+    # --- Primary: OpenAI vector embeddings ---
+    try:
+        async with profile_operation("embedding_generation") as op:
+            embedding = await _get_embedding_with_retry(model, query)
+            op.finish(embedding_dimensions=len(embedding))
+
+        async with profile_operation("vector_search") as op:
+            sql_query = (
+                select(db.DocumentChunk.content, db.SourceDocument.filename)
+                .join(db.SourceDocument)
+                .where(db.SourceDocument.active == True)
+                .order_by(db.DocumentChunk.embedding.max_inner_product(embedding))
+                .limit(10)
+            )
+            result = await session.execute(sql_query)
+            chunks: list[tuple[str, str]] = result.all()
+            op.finish(chunks_found=len(chunks))
+
+        if chunks:
+            return chunks
+        # If vector search returns nothing, fall through to full-text
+        tu.logger.warning("[EMBED_SEARCH] Vector search returned 0 chunks; trying FTS fallback")
+
+    except Exception as e:
+        tu.logger.warning(f"[EMBED_SEARCH] Embedding failed ({e}); using FTS fallback")
+
+    # --- Fallback: PostgreSQL full-text search (no API calls needed) ---
+    return await _fulltext_search_fallback(session, query)
 
 
 
@@ -1388,56 +1506,46 @@ async def _guest_chat_stream(
         )
     )
 
-    # Stream LLM response
+    # Call LLM and stream response word-by-word
+    # Uses chat_async (not chat_stream) — same approach as the working main app.
     response_content = ""
     try:
-        if is_non_english:
-            # === PHASE 1B (guest): collect full English response, translate, yield translated ===
-            if hasattr(model, "chat_stream"):
-                async for chunk in model.chat_stream(master_thread):
-                    content = chunk.content if hasattr(chunk, "content") else str(chunk)
-                    response_content += content
-                    # NOTE: do NOT yield English tokens; we need full text to translate
-            else:
-                response = await model.chat_async(master_thread)
-                response_content = response.content if hasattr(response, "content") else str(response)
+        response = await model.chat_async(master_thread)
+        response_content = response.content if hasattr(response, "content") else str(response)
 
-            # Translate the full English response into user_lang
+        if is_non_english:
+            # === PHASE 1B (guest): translate full English response then stream translated words ===
             try:
-                translated_content = await translate_assistant_response(
+                response_content = await translate_assistant_response(
                     session, response_content, user_lang
                 )
             except Exception as e:
                 tu.logger.warning(
                     f"[GUEST_CHAT_LANG] Output translation failed; serving English: {e}"
                 )
-                translated_content = response_content
+            # === END PHASE 1B ===
 
-            # Yield translated text as synthetic word-chunks for streaming feel
-            words = translated_content.split()
-            for i, word in enumerate(words):
-                yield ta.to_openai_chunk(tt.assistant(word if i == 0 else " " + word))
-                await asyncio.sleep(0.025)
-            # === END PHASE 1B addition ===
-
-        else:
-            # === ENGLISH PATH — unchanged from pre-Phase-1B behavior ===
-            if hasattr(model, "chat_stream"):
-                async for chunk in model.chat_stream(master_thread):
-                    content = chunk.content if hasattr(chunk, "content") else str(chunk)
-                    response_content += content
-                    yield ta.to_openai_chunk(tt.assistant(content))
-            else:
-                response = await model.chat_async(master_thread)
-                response_content = response.content if hasattr(response, "content") else str(response)
-                words = response_content.split()
-                for i, word in enumerate(words):
-                    yield ta.to_openai_chunk(tt.assistant(word if i == 0 else " " + word))
-                    await asyncio.sleep(0.025)
+        # Stream as individual words for smooth frontend display
+        words = response_content.split()
+        for i, word in enumerate(words):
+            yield ta.to_openai_chunk(tt.assistant(word if i == 0 else " " + word))
+            await asyncio.sleep(0.025)
     except Exception as e:
         tu.logger.error(f"Guest chat LLM error: {e}")
+        # Distinguish between quota/rate-limit errors and other errors
+        err_str = str(e)
+        if "429" in err_str or "Too Many Requests" in err_str:
+            err_msg = (
+                "The wisdom service is momentarily resting — our AI is taking a brief pause. "
+                "Please try again in a few moments, or return shortly. "
+                "Bhagavan's teachings will be here waiting for you."
+            )
+        else:
+            err_msg = (
+                "Something unexpected interrupted the response. "
+                "Please try again — each question opens a new thread of inquiry."
+            )
         # Translate the error message too if non-English
-        err_msg = "An error occurred. Please try again."
         if is_non_english:
             try:
                 err_msg = await translate_assistant_response(session, err_msg, user_lang)

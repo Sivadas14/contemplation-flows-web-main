@@ -1532,8 +1532,20 @@ async def _guest_chat_stream(
             await asyncio.sleep(0.025)
     except Exception as e:
         tu.logger.error(f"Guest chat LLM error: {e}")
+        # Distinguish between quota/rate-limit errors and other errors
+        err_str = str(e)
+        if "429" in err_str or "Too Many Requests" in err_str:
+            err_msg = (
+                "The wisdom service is momentarily resting — our AI is taking a brief pause. "
+                "Please try again in a few moments, or return shortly. "
+                "Bhagavan's teachings will be here waiting for you."
+            )
+        else:
+            err_msg = (
+                "Something unexpected interrupted the response. "
+                "Please try again — each question opens a new thread of inquiry."
+            )
         # Translate the error message too if non-English
-        err_msg = "An error occurred. Please try again."
         if is_non_english:
             try:
                 err_msg = await translate_assistant_response(session, err_msg, user_lang)

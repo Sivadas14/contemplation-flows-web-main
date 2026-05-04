@@ -614,6 +614,7 @@ function SacredLibrarySection() {
 const GUEST_SESSION_ID_KEY   = "as_guest_sid";
 const GUEST_MSG_COUNT_KEY    = "as_guest_count";
 const GUEST_MESSAGES_KEY     = "as_guest_msgs";
+const GUEST_MESSAGES_LANG_KEY = "as_guest_msgs_lang";  // tracks the language the stored messages are currently in
 const GUEST_CONTENT_COUNT_KEY = "as_guest_content_count";
 const GUEST_LIMIT            = 5;
 const GUEST_CONTENT_LIMIT    = 3;
@@ -621,6 +622,63 @@ const API_BASE               = (import.meta.env.VITE_API_BASE_URL as string || "
 
 type GMsg = { role: "user" | "assistant"; content: string };
 type GenStatus = "idle" | "pending" | "processing" | "complete" | "failed";
+
+/**
+ * Returns the language the user is currently viewing the page in by reading
+ * GTranslate's `googtrans` cookie. If absent (i.e. the page is in its
+ * original/source language because the user clicked "Show original" or never
+ * translated), returns "en". We deliberately do NOT fall back to `pref_lang`
+ * — that fallback created a stale-state bug where switching back to English
+ * via GTranslate would leave the chat responding in the previously-selected
+ * language because pref_lang lagged behind googtrans.
+ */
+function detectLang(): string {
+  const gt = document.cookie.match(/googtrans=\/[^/]+\/([a-zA-Z-]+)/);
+  if (gt && gt[1]) {
+    const code = gt[1].toLowerCase();
+    if (code === "zh-cn") return "zh-CN";
+    if (code === "zh-tw") return "zh-TW";
+    return code;
+  }
+  return "en";
+}
+
+function getMessagesLang(): string {
+  try { return localStorage.getItem(GUEST_MESSAGES_LANG_KEY) || "en"; }
+  catch { return "en"; }
+}
+
+function setMessagesLangStored(lang: string): void {
+  try { localStorage.setItem(GUEST_MESSAGES_LANG_KEY, lang); } catch { /* ignore */ }
+}
+
+/**
+ * Translate one chat message via the same gateway the rest of the system
+ * uses. Falls through to the source text on any failure so the user never
+ * sees a broken UI; worst case the message stays in its previous language.
+ */
+async function translateChatMessage(
+  text: string,
+  from: string,
+  to: string,
+  sig?: AbortSignal,
+): Promise<string> {
+  if (!text || !text.trim() || from === to) return text;
+  try {
+    const res = await fetch(`${API_BASE}/translate`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ text, source_lang: from, target_lang: to }),
+      signal: sig,
+    });
+    if (!res.ok) return text;
+    const data = await res.json();
+    if (data && data.success && data.data && data.data.translated) {
+      return data.data.translated as string;
+    }
+  } catch { /* swallow — return source */ }
+  return text;
+}
 
 function getGuestSessionId(): string {
   // localStorage persists across tab/window close — critical for rate limiting.
@@ -700,6 +758,77 @@ function GuestChatSection() {
     try { localStorage.setItem(GUEST_MESSAGES_KEY, JSON.stringify(msgs.slice(-20))); } catch {}
   };
 
+  // Keep a fresh ref to messages so the polling effect below can read them
+  // without re-creating itself on every send.
+  const messagesLatestRef = useRef(messages);
+  useEffect(() => { messagesLatestRef.current = messages; }, [messages]);
+
+  // ── Retranslate chat history on language change ────────────────────────────
+  // When the user switches language via the GTranslate widget (e.g. Hindi →
+  // English), the visible page DOM gets re-translated by GTranslate, but our
+  // chat messages live in React state + localStorage and stay in their
+  // previously-stored language. This effect watches for googtrans changes
+  // and re-translates each existing message via /api/translate, then writes
+  // back to state + localStorage so the chat history matches what the user
+  // currently sees on the rest of the page.
+  //
+  // Polls every 2 s. Idempotent: if currentLang === messagesLang, no-op.
+  // Aborts in-flight retranslations on unmount or rapid re-switches.
+  useEffect(() => {
+    let cancelled = false;
+    let activeAbort: AbortController | null = null;
+
+    const checkAndRetranslate = async () => {
+      if (cancelled) return;
+      const currentLang = detectLang();
+      const messagesLang = getMessagesLang();
+      if (currentLang === messagesLang) return;
+
+      const currentMessages = messagesLatestRef.current;
+      if (currentMessages.length === 0) {
+        // No messages to translate — just remember the new language.
+        setMessagesLangStored(currentLang);
+        return;
+      }
+
+      // Cancel any previous in-flight retranslation
+      if (activeAbort) activeAbort.abort();
+      activeAbort = new AbortController();
+      const sig = activeAbort.signal;
+
+      // Translate all messages in parallel. Each call is independent and
+      // small; with our ~5-message guest-chat cap this is at most 5
+      // concurrent translate requests — well within rate limits.
+      const translated = await Promise.all(
+        currentMessages.map(async (m) => {
+          if (!m.content || !m.content.trim()) return m;
+          const newContent = await translateChatMessage(
+            m.content, messagesLang, currentLang, sig
+          );
+          return { ...m, content: newContent };
+        })
+      );
+
+      if (cancelled || sig.aborted) return;
+      setMessages(translated);
+      saveMsgs(translated);
+      setMessagesLangStored(currentLang);
+    };
+
+    // Run once on mount in case messages from a previous session need to
+    // catch up (user picks Hindi, GTranslate reloads the page, messages
+    // rehydrate from localStorage in their old language).
+    checkAndRetranslate();
+    const interval = window.setInterval(checkAndRetranslate, 2000);
+
+    return () => {
+      cancelled = true;
+      if (activeAbort) activeAbort.abort();
+      window.clearInterval(interval);
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
   const handleSend = async () => {
     const q = input.trim();
     if (!q || loading) return;
@@ -718,23 +847,13 @@ function GuestChatSection() {
     setInput("");
     setLoading(true);
 
+    // PHASE 1B (guest): use the module-scope detectLang() which reads the
+    // GTranslate googtrans cookie directly. After this send completes, we
+    // remember which language the messages are now stored in so the
+    // retranslation effect knows what to translate FROM if the user
+    // switches language later.
+    const lang = detectLang();
     try {
-      // PHASE 1B (guest): read GTranslate's googtrans cookie to determine the
-      // user's selected language. Format is "/auto/hi" or "/en/hi". Falls back
-      // to our pref_lang cookie (set by post-login switcher) or "en".
-      const detectLang = (): string => {
-        const gt = document.cookie.match(/googtrans=\/[^/]+\/([a-zA-Z-]+)/);
-        if (gt && gt[1]) {
-          const code = gt[1];
-          // GTranslate emits "zh-CN" already in Chrome's pattern; normalize casing
-          if (code.toLowerCase() === "zh-cn") return "zh-CN";
-          if (code.toLowerCase() === "zh-tw") return "zh-TW";
-          return code.toLowerCase();
-        }
-        const pref = document.cookie.match(/pref_lang=([^;]+)/);
-        return (pref && pref[1]) ? pref[1] : "en";
-      };
-
       const res = await fetch(`${API_BASE}/chat/guest`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -742,7 +861,7 @@ function GuestChatSection() {
           message: q,
           session_id: sid,
           history: messages.slice(-6).map(m => ({ role: m.role, content: m.content })),
-          lang: detectLang(),
+          lang: lang,
         }),
       });
 
@@ -797,6 +916,9 @@ function GuestChatSection() {
       const finalMsgs: GMsg[] = [...prev, { role: "assistant", content: aiText || "…" }];
       setMessages(finalMsgs);
       saveMsgs(finalMsgs);
+      // Mark the language these messages are now in (used by the retranslation
+      // effect below to know what to translate FROM if the user switches).
+      setMessagesLangStored(lang);
       if (newCount >= GUEST_LIMIT && !aiText.startsWith(NO_PASSAGE_MARKER)) {
         setTimeout(() => setShowModal(true), 1800);
       }
@@ -804,6 +926,7 @@ function GuestChatSection() {
       const errMsgs: GMsg[] = [...prev, { role: "assistant", content: "Unable to respond right now. Please try again." }];
       setMessages(errMsgs);
       saveMsgs(errMsgs);
+      setMessagesLangStored(lang);
     } finally {
       setLoading(false);
     }

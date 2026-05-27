@@ -675,6 +675,63 @@ async def _create_suggested_topics_table(session: AsyncSession) -> None:
     _log("suggested_topics table verified/created.")
 
 
+async def _add_explicit_postgrest_grants(session: AsyncSession) -> None:
+    """
+    Add explicit GRANTs required by Supabase PostgREST / supabase-js.
+
+    WHY THIS IS NEEDED:
+    From May 30, 2026 new Supabase projects (and from October 30, 2026 ALL
+    projects) require an explicit GRANT before PostgREST will expose a table.
+    RLS policies alone are no longer sufficient — the role must also have
+    been granted the relevant privilege on the table.
+
+    WHAT IS GRANTED:
+      anon role       → SELECT on the eight public-read tables
+                        (pricing page, daily quote, notification bar, addons)
+      authenticated   → SELECT + INSERT + UPDATE + DELETE on user-owned tables
+                        (RLS policies still enforce row-level ownership — these
+                         GRANTs just let PostgREST see the tables at all)
+
+    IDEMPOTENT: PostgreSQL GRANT is a no-op when the privilege is already held.
+    Safe to run on every restart.
+    """
+    _log("Adding explicit PostgREST GRANTs for anon and authenticated roles...")
+
+    # Tables the anon role (supabase-js on the landing page) must SELECT from
+    public_read_tables = [
+        "plans",
+        "plan_prices",
+        "plan_features",
+        "plan_features_v1",
+        "features",
+        "daily_contemplations",
+        "notification_bar",
+        "addon_types",
+    ]
+    for tbl in public_read_tables:
+        await session.execute(text(
+            f"GRANT SELECT ON public.{tbl} TO anon"
+        ))
+    _log(f"GRANT SELECT TO anon: {', '.join(public_read_tables)}")
+
+    # Tables authenticated users access via supabase-js (RLS restricts rows)
+    user_tables = [
+        "user_profiles",
+        "conversations",
+        "subscriptions",
+        "content_generations",
+        "user_addons",
+    ]
+    for tbl in user_tables:
+        await session.execute(text(
+            f"GRANT SELECT, INSERT, UPDATE, DELETE ON public.{tbl} TO authenticated"
+        ))
+    _log(f"GRANT SELECT/INSERT/UPDATE/DELETE TO authenticated: {', '.join(user_tables)}")
+
+    await session.commit()
+    _log("Explicit PostgREST GRANTs complete.")
+
+
 async def _enable_row_level_security(session: AsyncSession) -> None:
     """Enable Row Level Security on every table in the public schema.
 
@@ -829,3 +886,9 @@ async def run_migrations(session_factory) -> None:
         # The backend's direct PostgreSQL connection uses the postgres superuser
         # which bypasses RLS automatically — no application code changes needed.
         await _safe_migration(session, "_enable_row_level_security", _enable_row_level_security)
+
+        # ── PostgREST explicit GRANTs (Supabase change, enforced May 30 2026) ──
+        # From May 30 2026 (new projects) / Oct 30 2026 (all projects) Supabase
+        # requires explicit GRANT on each table in addition to RLS policies.
+        # Idempotent — GRANT is a no-op when the privilege already exists.
+        await _safe_migration(session, "_add_explicit_postgrest_grants", _add_explicit_postgrest_grants)

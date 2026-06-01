@@ -84,48 +84,78 @@ async def translate_text(
 
     Cache-aware: returns cached translation if available; otherwise translates,
     caches, and returns. On full failure returns source text unchanged.
+
+    Fully exception-safe: no unhandled exception escapes this function.
+    Budget check errors fail-open (don't block translation).
+    Cache/increment errors are best-effort (logged, never abort translation).
     """
     if not text or not text.strip():
         return text
     if source == target:
         return text
 
-    # Cache lookup keyed on the source text + target lang
-    cached = await cache.lookup(session, text, target)
-    if cached:
-        return cached.translated_body
+    # Cache lookup — wrapped so a missing/broken table doesn't abort translation
+    try:
+        cached = await cache.lookup(session, text, target)
+        if cached:
+            return cached.translated_body
+    except Exception as e:
+        log.warning("[TRANSLATE] Cache lookup failed (%s→%s %d chars): %s", source, target, len(text), e)
 
     primary = _primary_provider(target)
     secondary = "azure" if primary == "sarvam" else "sarvam"
     chain = [primary, secondary, "google"]
 
     for prov in chain:
-        if not await budget.can_spend(session, prov, len(text)):
+        # Budget check — fail-open so a DB error never silently blocks translation
+        try:
+            can = await budget.can_spend(session, prov, len(text))
+        except Exception as e:
+            log.warning("[TRANSLATE] Budget check error for %s (%s→%s): %s — proceeding", prov, source, target, e)
+            can = True  # don't block translation if budget DB is broken
+
+        if not can:
+            log.info("[TRANSLATE] Budget cap reached for %s (%d chars %s→%s)", prov, len(text), source, target)
             continue
+
         translated = await _try_provider(prov, text, target, source)
         if translated:
-            await budget.increment_usage(session, prov, len(text))
+            # Increment usage — best-effort, rollback session if it corrupts
+            try:
+                await budget.increment_usage(session, prov, len(text))
+            except Exception as e:
+                log.warning("[TRANSLATE] Budget increment failed for %s: %s", prov, e)
+                try:
+                    await session.rollback()
+                except Exception:
+                    pass
+
             quality = 0.7 if length_ratio_anomaly(text, translated) else 0.9
 
-            # Cache for future identical calls
+            # Cache — best-effort, rollback session if FK violation corrupts it
             try:
                 await cache.upsert(
                     session,
                     domain="coin",
                     resource_type="chat",
-                    resource_id="anonymous",  # not resource-keyed; matched only by hash
+                    resource_id="anonymous",
                     language_code=target,
                     source_text=text,
                     translated_body=translated,
                     provider=prov,
                     quality_score=quality,
                 )
-            except Exception:
-                pass
+            except Exception as e:
+                log.warning("[TRANSLATE] Cache upsert failed (%s→%s): %s", source, target, e)
+                try:
+                    await session.rollback()
+                except Exception:
+                    pass
 
+            log.info("[TRANSLATE] OK: %s %s→%s %d chars", prov, source, target, len(text))
             return translated
 
-    log.warning("translate_text exhausted providers for %s→%s; returning source", source, target)
+    log.warning("[TRANSLATE] All providers exhausted %s→%s (%d chars) — serving source", source, target, len(text))
     return text
 
 

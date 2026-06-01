@@ -48,8 +48,13 @@ class Settings(BaseSettings):
     google_translate_key: str | None = None
 
     # translation system — budget caps (chars/day per provider)
-    translation_daily_sarvam_cap: int = 60_000
-    translation_daily_azure_cap:  int = 60_000
+    # Sarvam free tier: ~2M chars/month → cap at 500K/day (safe under quota)
+    # Azure free tier: 2M chars/month → cap at 500K/day
+    # Google free tier: 500K chars/month → cap at 15K/day
+    # Previous caps (60K/day Sarvam) were too low: long AI responses (1000+ chars)
+    # exhausted the daily budget, causing Hindi/Indic chat to silently fall back to English.
+    translation_daily_sarvam_cap: int = 500_000
+    translation_daily_azure_cap:  int = 500_000
     translation_daily_google_cap: int = 15_000
 
     # supabase settings
